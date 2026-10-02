@@ -407,3 +407,132 @@ async def test_global_switch_reports_failed_stale_override_cleanup(tmp_path, mon
     assert "store locked" in confirmation
     assert "Saved to config.yaml" not in confirmation
     assert runner._session_model_override(session_key)["model"] == "gpt-5.5"
+
+
+def _telegram_picker_adapter(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from gateway.config import PlatformConfig
+    from plugins.platforms.telegram.adapter import TelegramAdapter
+
+    # The gateway suite mocks the Telegram SDK; retain button payloads for render assertions.
+    monkeypatch.setattr(
+        "plugins.platforms.telegram.adapter.InlineKeyboardButton",
+        lambda text, callback_data: types.SimpleNamespace(text=text, callback_data=callback_data),
+    )
+    monkeypatch.setattr(
+        "plugins.platforms.telegram.adapter.InlineKeyboardMarkup",
+        lambda rows: types.SimpleNamespace(inline_keyboard=rows),
+    )
+    adapter = TelegramAdapter(PlatformConfig(enabled=True, token="test-token"))
+    adapter._bot = AsyncMock()
+    adapter._bot.send_message.return_value = types.SimpleNamespace(message_id=42)
+    adapter._app = MagicMock()
+    monkeypatch.setattr(adapter, "_callback_authorized", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        "hermes_cli.model_selection_guards.combined_selection_warning", lambda *a, **kw: None
+    )
+    return adapter
+
+
+def _telegram_picker_query(data):
+    from unittest.mock import AsyncMock
+
+    return types.SimpleNamespace(
+        data=data,
+        message=types.SimpleNamespace(
+            chat_id=12345, chat=types.SimpleNamespace(type="private"), message_thread_id=None
+        ),
+        from_user=types.SimpleNamespace(id=12345, first_name="Owner"),
+        answer=AsyncMock(),
+        edit_message_text=AsyncMock(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_telegram_picker_global_button_persists_only_after_opt_in(tmp_path, monkeypatch):
+    """The real Telegram result keyboard promotes a session pick through the gateway callback."""
+    from agent.i18n import t
+
+    cfg_path = _setup_isolated_home(tmp_path, monkeypatch, {"default": "old-model", "provider": "custom"})
+    before = cfg_path.read_bytes()
+    adapter = _telegram_picker_adapter(monkeypatch)
+    runner = _make_runner(adapter)
+    assert await runner._handle_model_command(_make_event("/model")) is None
+    state = adapter._model_picker_state["12345"]
+    session_key = state["session_key"]
+    state.update(selected_provider="openrouter", model_list=["gpt-5.5"])
+    query = _telegram_picker_query("mm:0")
+
+    await adapter._handle_callback_query(types.SimpleNamespace(callback_query=query), None)
+
+    assert cfg_path.read_bytes() == before
+    keyboard = query.edit_message_text.call_args.kwargs["reply_markup"]
+    assert len(keyboard.inline_keyboard) == 1
+    assert len(keyboard.inline_keyboard[0]) == 1
+    button = keyboard.inline_keyboard[0][0]
+    assert button.callback_data == "mG:0"
+    assert button.text == t("platform.telegram.picker.make_global")
+    assert "12345" not in adapter._model_picker_state
+    assert adapter._model_global_pending["12345"]["session_key"] == session_key
+
+    query.data = button.callback_data
+    await adapter._handle_callback_query(types.SimpleNamespace(callback_query=query), None)
+
+    written = yaml.safe_load(cfg_path.read_text())
+    assert written["model"]["default"] == "gpt-5.5"
+    assert written["model"]["provider"] == "openrouter"
+    assert written["model"]["base_url"] == "https://openrouter.ai/api/v1"
+    assert query.edit_message_text.call_args.kwargs["reply_markup"] is None
+    assert adapter.format_message(t("platform.telegram.picker.saved_global")) in query.edit_message_text.call_args.kwargs["text"]
+    assert "12345" not in adapter._model_global_pending
+    saved = cfg_path.read_bytes()
+    query.edit_message_text.reset_mock()
+    await adapter._handle_callback_query(types.SimpleNamespace(callback_query=query), None)
+    assert cfg_path.read_bytes() == saved
+    query.edit_message_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["expired", "switch", "save"])
+async def test_telegram_picker_global_failure_is_safe(tmp_path, monkeypatch, failure):
+    """Expired buttons and callback exceptions never persist or leave a pending global save."""
+    from unittest.mock import AsyncMock
+
+    from agent.i18n import t
+    from plugins.platforms.telegram.adapter import _toast
+
+    cfg_path = _setup_isolated_home(tmp_path, monkeypatch, {"default": "old-model", "provider": "custom"})
+    before = cfg_path.read_bytes()
+    adapter = _telegram_picker_adapter(monkeypatch)
+    runner = _make_runner(adapter)
+    assert await runner._handle_model_command(_make_event("/model")) is None
+    state = adapter._model_picker_state["12345"]
+    callback = AsyncMock(side_effect=RuntimeError("switch unavailable"))
+    if failure == "switch":
+        state.update(selected_provider="openrouter", model_list=["gpt-5.5"], on_model_selected=callback)
+        query = _telegram_picker_query("mc:0")
+    else:
+        adapter._model_picker_state.clear()
+        query = _telegram_picker_query("mG:0")
+        if failure == "save":
+            adapter._model_global_pending["12345"] = {
+                "model_id": "gpt-5.5", "provider_slug": "openrouter",
+                "session_key": state["session_key"], "callback": callback,
+            }
+
+    await adapter._handle_callback_query(types.SimpleNamespace(callback_query=query), None)
+
+    assert cfg_path.read_bytes() == before
+    assert "12345" not in adapter._model_global_pending
+    if failure == "expired":
+        callback.assert_not_awaited()
+        query.edit_message_text.assert_not_awaited()
+        query.answer.assert_awaited_once_with(text=_toast("platform.telegram.picker.expired_model"))
+    else:
+        query.answer.assert_awaited_once_with(text=_toast("platform.telegram.picker.switch_failed"))
+        if failure == "switch":
+            assert query.edit_message_text.call_args.kwargs["reply_markup"] is None
+            assert adapter.format_message(t("platform.telegram.picker.switch_error", error="switch unavailable")) == query.edit_message_text.call_args.kwargs["text"]
+        else:
+            callback.assert_awaited_once_with("12345", "gpt-5.5", "openrouter", persist_global=True)
