@@ -469,19 +469,20 @@ class GatewayModelCommandsMixin:
         )
         adapter = self._delivery_adapter_for(ctx.source)
         if adapter is not None and getattr(type(adapter), "send_model_picker", None) is not None:
-            async def _picker_switch(model_id: str, provider_slug: str) -> str:
+            async def _picker_switch(model_id: str, provider_slug: str, persist_global: bool | None = None) -> str:
                 # The picker callback binds the raw event source (pre-normalization).
-                result, error = await self._perform_model_switch(ctx, model_id, provider_slug, event.source)
+                switch_ctx = ctx if persist_global is None else dataclasses.replace(ctx, persist_global=persist_global)
+                result, error = await self._perform_model_switch(switch_ctx, model_id, provider_slug, event.source)
                 if error is not None:
                     return error
-                return await self._commit_model_switch(result, ctx, source=event.source, picker=True)
+                return await self._commit_model_switch(result, switch_ctx, source=event.source, picker=True)
 
-            async def _on_model_selected(_chat_id: str, model_id: str, provider_slug: str) -> str:
+            async def _on_model_selected(_chat_id: str, model_id: str, provider_slug: str, persist_global: bool | None = None) -> str:
                 if profile_home is None:
-                    return await _picker_switch(model_id, provider_slug)
+                    return await _picker_switch(model_id, provider_slug, persist_global)
                 from gateway.run import _profile_runtime_scope
                 with _profile_runtime_scope(profile_home):
-                    return await _picker_switch(model_id, provider_slug)
+                    return await _picker_switch(model_id, provider_slug, persist_global)
 
             if await self._send_model_picker(event, ctx.source, adapter, ctx.session_key, listing_kwargs, _on_model_selected):
                 return None  # Picker sent — adapter handles the response

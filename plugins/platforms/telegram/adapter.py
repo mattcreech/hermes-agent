@@ -698,6 +698,7 @@ class TelegramAdapter(BasePlatformAdapter):
         # getFile cap: 20MB on the public Bot API, 2GB on a local telegram-bot-api (base_url).
         self._max_doc_bytes: int = 2 * 1024 * 1024 * 1024 if extra.get("base_url") else 20 * 1024 * 1024
         self._model_picker_state: Dict[str, dict] = {}  # per-chat interactive picker state
+        self._model_global_pending: Dict[str, dict] = {}  # applied routes awaiting an opt-in global save
         self._choice_picker_state: Dict[str, dict] = {}
         self._approval_state: Dict[int, str] = {}  # message_id → session_key
         self._slash_confirm_state: Dict[str, str] = {}  # confirm_id → session_key
@@ -4406,6 +4407,7 @@ class TelegramAdapter(BasePlatformAdapter):
             )
 
             def _remember(msg):
+                self._model_global_pending.pop(str(chat_id), None)
                 self._model_picker_state[str(chat_id)] = {
                     "msg_id": msg.message_id, "providers": providers, "session_key": session_key, "on_model_selected": on_model_selected,
                     "current_model": current_model, "current_provider": current_provider, "provider_page": 0}
@@ -4440,13 +4442,13 @@ class TelegramAdapter(BasePlatformAdapter):
             "send_choice_picker", chat_id, metadata, build, thread_id=metadata.get("thread_id") if metadata else None,
             reply_to_mode=self._reply_to_mode)
 
-    async def _edit_result_text(self, query, result_text: str) -> None:
-        """Replace a picker message with ``result_text`` (MarkdownV2, then plain, then give up), keyboard removed."""
+    async def _edit_result_text(self, query, result_text: str, keyboard=None) -> None:
+        """Replace a picker message with ``result_text`` (MarkdownV2, then plain, then give up), optional result keyboard."""
         try:
-            await query.edit_message_text(text=self.format_message(result_text), parse_mode=ParseMode.MARKDOWN_V2, reply_markup=None)
+            await query.edit_message_text(text=self.format_message(result_text), parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
         except Exception:
             with contextlib.suppress(Exception):
-                await query.edit_message_text(text=result_text, parse_mode=None, reply_markup=None)
+                await query.edit_message_text(text=result_text, parse_mode=None, reply_markup=keyboard)
 
     async def _handle_choice_picker_callback(self, query, data: str, chat_id: str) -> None:
         """Handle choice picker button taps (cp:<index>)."""
@@ -4608,7 +4610,16 @@ class TelegramAdapter(BasePlatformAdapter):
             logger.error("Model picker switch failed: %s", exc)
             result_text = t("platform.telegram.picker.switch_error", error=str(exc))
             switch_failed = True
-        await self._edit_result_text(query, result_text)
+        self._model_global_pending.pop(chat_id, None)
+        keyboard = None
+        if not switch_failed:
+            # Keep the applied route and callback after the interactive picker state is dropped.
+            self._model_global_pending[chat_id] = {
+                "model_id": model_id, "provider_slug": provider_slug,
+                "session_key": self._model_picker_state[chat_id]["session_key"], "callback": callback}
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton(t("platform.telegram.picker.make_global"), callback_data="mG:0")]])
+        await self._edit_result_text(query, result_text, keyboard)
         await query.answer(text=_toast("platform.telegram.picker.switch_failed" if switch_failed else "platform.telegram.picker.switched"))
         self._model_picker_state.pop(chat_id, None)
 
@@ -4621,9 +4632,9 @@ class TelegramAdapter(BasePlatformAdapter):
             return None
 
     async def _handle_model_picker_callback(self, query, data: str, chat_id: str) -> None:
-        """Handle model picker callbacks (mp:/mpg:/mpv:/mm:/mc:/mb/mx/mg:)."""
+        """Handle model picker callbacks (mp:/mpg:/mpv:/mm:/mc:/mb/mx/mg:/mG:)."""
         state = self._model_picker_state.get(chat_id)
-        if not state:
+        if not state and not data.startswith("mG:"):
             await query.answer(text=_toast("platform.telegram.picker.expired_model"))
             return
         get_label = self._provider_get_label()
@@ -4637,6 +4648,20 @@ class TelegramAdapter(BasePlatformAdapter):
             state["selected_provider_name"] = provider.get("name", provider_slug)
             state["model_list"] = provider.get("models", [])
             await self._picker_show_models(query, state, 0)
+        elif data.startswith("mG:"):  # opt in to persisting the already-applied route
+            pending = self._model_global_pending.pop(chat_id, None)
+            if not pending:
+                await query.answer(text=_toast("platform.telegram.picker.expired_model"))
+                return
+            try:
+                result_text = await pending["callback"](
+                    chat_id, pending["model_id"], pending["provider_slug"], persist_global=True)
+            except Exception as exc:
+                logger.error("Model picker global save failed: %s", exc)
+                await query.answer(text=_toast("platform.telegram.picker.switch_failed"))
+                return
+            await self._edit_result_text(query, result_text + t("platform.telegram.picker.saved_global"))
+            await query.answer()
         elif data.startswith("mg:"):  # model page navigation
             page = await self._parse_page(query, data[3:])
             if page is not None:
@@ -4794,7 +4819,7 @@ class TelegramAdapter(BasePlatformAdapter):
         cb = self._callback_ctx(query)
         # Model picker / generic choice picker (/reasoning, /fast) need a chat id.
         for prefixes, handler in (
-            (("mp:", "mpg:", "mpv:", "mm:", "mc:", "mb", "mx", "mg:"), self._handle_model_picker_callback),
+            (("mp:", "mpg:", "mpv:", "mm:", "mc:", "mb", "mx", "mg:", "mG:"), self._handle_model_picker_callback),
             (("cp:",), self._handle_choice_picker_callback)):
             if data.startswith(prefixes):
                 chat_id = str(query.message.chat_id) if query.message else None
