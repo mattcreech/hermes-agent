@@ -265,6 +265,56 @@ class TestBuildSkillsSystemPrompt:
 
 
 
+    @pytest.mark.parametrize("gui_first", [False, True])
+    def test_routine_gui_skill_exception_requires_available_tool(
+        self, monkeypatch, tmp_path, gui_first
+    ):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        monkeypatch.delenv("HERMES_SINGLE_QUERY_SESSION", raising=False)
+        skill_dir = tmp_path / "skills" / "computer-use"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: computer-use\ndescription: Drive the desktop\n---\n"
+        )
+        tools = {"terminal", "computer_use"}
+        variants = [tools, {"terminal"}, set(), None] if gui_first else [None, set(), {"terminal"}, tools]
+        for available_tools in variants:
+            prompt = build_skills_system_prompt(available_tools=available_tools)
+            assert "task, you MUST load it with skill_view(name)" in prompt
+            assert "- computer-use: Drive the desktop" in prompt
+            if available_tools == tools:
+                assert "Exception to the mandatory skill-loading rule" in prompt
+                assert "routine captures, input, and window inspection" in prompt
+                assert "use computer_use directly through its tool schema" in prompt
+                assert "without loading computer-use or remote setup skills solely because GUI is involved" in prompt
+                assert "installation, setup, configuration, troubleshooting, unfamiliar actions, and unrelated tasks" in prompt
+                assert "Apart from the routine computer_use exception above" in prompt
+            else:
+                assert "Exception to the mandatory skill-loading rule" not in prompt
+                assert prompt.endswith(
+                    "Only proceed without loading a skill if genuinely none are relevant to the task."
+                )
+            assert build_skills_system_prompt(available_tools=available_tools) == prompt
+
+    def test_routine_gui_exception_preserves_oneshot_guidance(self, monkeypatch, tmp_path):
+        from agent.oneshot_footprint import ONESHOT_SKILLS_LOAD_GUIDANCE
+
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        skill_dir = tmp_path / "skills" / "computer-use"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: computer-use\ndescription: Drive the desktop\n---\n"
+        )
+        interactive = build_skills_system_prompt(available_tools={"computer_use"})
+        monkeypatch.setenv("HERMES_SINGLE_QUERY_SESSION", "1")
+        with_gui = build_skills_system_prompt(available_tools={"computer_use"})
+        without_gui = build_skills_system_prompt(available_tools=set())
+        assert with_gui == without_gui
+        assert with_gui.startswith(ONESHOT_SKILLS_LOAD_GUIDANCE)
+        assert "Exception to the mandatory skill-loading rule" not in with_gui
+        monkeypatch.delenv("HERMES_SINGLE_QUERY_SESSION")
+        assert build_skills_system_prompt(available_tools={"computer_use"}) == interactive
+
     def test_deduplicates_skills(self, monkeypatch, tmp_path):
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         cat_dir = tmp_path / "skills" / "tools"

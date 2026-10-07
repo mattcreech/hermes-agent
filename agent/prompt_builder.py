@@ -1441,6 +1441,12 @@ def _render_skills_index(
             + "\n<available_skills>\n" + "\n".join(index_lines) + "\n</available_skills>"
             + hidden_note
         )
+    _routine_gui_exception = (
+        "Exception to the mandatory skill-loading rule: for routine captures, input, and window inspection, "
+        "use computer_use directly through its tool schema without loading computer-use or remote setup "
+        "skills solely because GUI is involved. Relevant skills remain mandatory for installation, setup, "
+        "configuration, troubleshooting, unfamiliar actions, and unrelated tasks.\n"
+    ) if available_tools is not None and "computer_use" in available_tools else ""
     return (
         "## Skills\n"
         "Before replying, scan the skills below. If a skill matches or is even partially relevant to your "
@@ -1452,14 +1458,20 @@ def _render_skills_index(
         "Skills also encode the user's preferred approach, conventions, and quality standards for tasks like "
         "code review, planning, and testing — load them even for tasks you already know how to do, because "
         "the skill defines how it should be done here.\n"
-        "If a skill has issues, fix it with skill_manage(action='patch').\n"
+        + _routine_gui_exception
+        + "If a skill has issues, fix it with skill_manage(action='patch').\n"
         "After difficult/iterative tasks, offer to save as a skill. If a skill you loaded was missing steps, "
         "had wrong commands, or needed pitfalls you discovered, update it before finishing.\n"
         "\n"
         "<available_skills>\n"
         + "\n".join(index_lines) + "\n"
         "</available_skills>\n\n"
-        "Only proceed without loading a skill if genuinely none are relevant to the task."
+        + (
+            "Apart from the routine computer_use exception above, only proceed without loading a skill "
+            "if genuinely none are relevant to the task."
+            if _routine_gui_exception else
+            "Only proceed without loading a skill if genuinely none are relevant to the task."
+        )
         + hidden_note
     )
 
