@@ -375,7 +375,8 @@ def check_for_updates(*, install_root: Path | None = None, home: Path | None = N
                       cache_path: Path | None = None, branch_config_path: Path | None = None,
                       force: bool = False,
                       passive: bool = False, git: str = "git") -> dict:
-    """Return a presentation-ready status. Omitted branch follows the current checkout.
+    """Return a presentation-ready status. Omitted branch follows the current checkout,
+    or the main source target when maintained-branch updates are configured.
 
     Only the default (running installation) may use HERMES_REVISION. An explicit
     target must never inherit the host process's embedded revision or stamp.
@@ -400,7 +401,12 @@ def check_for_updates(*, install_root: Path | None = None, home: Path | None = N
     co = _read_checkout(root, git, embedded)
     desktop_config = _read_json(branch_config_path) if branch_config_path else None
     configured_branch = _configured_branch(desktop_config)
-    selected_branch = branch or configured_branch or _checked_out_branch(co.current_branch, "main")
+    maintained_main = (
+        channel == "main"
+        and (config.get("updates") or {}).get("parked_branch_strategy") == "update_in_place"
+    )
+    default_branch = "main" if maintained_main else _checked_out_branch(co.current_branch, "main")
+    selected_branch = branch or configured_branch or default_branch
     result.update(supported=True, currentSha=co.head, currentBranch=co.current_branch, dirty=co.dirty)
     if channel != "main":
         result["channel"] = channel
@@ -420,8 +426,11 @@ def check_for_updates(*, install_root: Path | None = None, home: Path | None = N
     elif branch is None:
         source_target = _resolve_channel(result, channel, co)
         if source_target is not None and not source_target.commit:
-            # The record supplies a default, not permission to leave the user's branch.
-            selected_branch = configured_branch or _checked_out_branch(co.current_branch, source_target.branch)
+            # Check the update target without leaving the maintained checkout.
+            selected_branch = configured_branch or (
+                source_target.branch if maintained_main
+                else _checked_out_branch(co.current_branch, source_target.branch)
+            )
     if "error" not in result and (source_target is None or source_target.branch is not None):
         # Only a Desktop-configured branch the caller did not override is healed.
         heal = branch_config_path and not branch and configured_branch == selected_branch
