@@ -41,3 +41,11 @@ def test_anthropic_falls_back_to_curated_when_live_unavailable():
         result = M.provider_model_ids("anthropic")
 
     assert result == list(M._PROVIDER_MODELS["anthropic"])
+
+
+def test_sonnet_55_available_without_live_discovery():
+    """Subscription discovery outages must not hide the supported Sonnet alias."""
+    with patch.object(M, "_fetch_anthropic_models", return_value=None):
+        result = M.provider_model_ids("anthropic")
+    assert result.count("claude-sonnet-5-5") == 1
+    assert result.index("claude-sonnet-5-5") < result.index("claude-sonnet-5")
