@@ -477,11 +477,19 @@ def _spawn_hermes_action(
 ) -> subprocess.Popen:
     """Spawn ``hermes <subcommand>`` detached (via ``hermes_cli.main``) and record the handle."""
     from hermes_cli.web_server import PROJECT_ROOT
+    from hermes_cli._launchers import runtime_command
+
+    cmd = runtime_command(PROJECT_ROOT, subcommand)
+    action_env = _profile_action_environment(subcommand, env_overrides)
+    action_id = (env_overrides or {}).get("HERMES_ACTION_ID")
+    if subcommand == ["update"]:
+        from hermes_cli.web_server_update import prepare_update_action
+
+        cmd, action_env = prepare_update_action(cmd, action_env, action_id)
     _ACTION_LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_file = open(_ACTION_LOG_DIR / _ACTION_LOG_FILES[name], "ab", buffering=0)
     # The header carries the action id durably: the update's completion marker lands in the ROOT
     # update.log every profile shares, and only this id ties one to the action THIS log started.
-    action_id = (env_overrides or {}).get("HERMES_ACTION_ID")
     stamp = time.strftime('%Y-%m-%d %H:%M:%S') + (f" {action_id}" if action_id else "")
     log_file.write(f"\n=== {name} started {stamp} ===\n".encode())
     if action_id:
@@ -490,8 +498,6 @@ def _spawn_hermes_action(
         from hermes_cli.runtime_state import _atomic_bytes
         _atomic_bytes(_ACTION_LOG_DIR / f"{name}.action_id", action_id.encode("ascii"))
 
-    from hermes_cli._launchers import runtime_command
-    cmd = runtime_command(PROJECT_ROOT, subcommand)
     if _action_targets_system_gateway(subcommand):
         # A system-scope lifecycle verb spawned as the dashboard's own user can only ever write
         # "System gateway <verb> requires root" into this log, so the button never worked on a
@@ -515,7 +521,6 @@ def _spawn_hermes_action(
         cmd = ["sudo", "-n", *cmd]
     # Named-profile actions get a scrubbed, pinned environment so the child cannot inherit the
     # dashboard profile's credentials; see _profile_action_environment (also drops _HERMES_GATEWAY).
-    action_env = _profile_action_environment(subcommand, env_overrides)
     detach = {"creationflags": windows_detach_flags()} if sys.platform == "win32" else {"start_new_session": True}
     proc = subprocess.Popen(
         cmd, cwd=str(PROJECT_ROOT), stdin=subprocess.DEVNULL, stdout=log_file, stderr=subprocess.STDOUT,

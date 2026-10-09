@@ -17,10 +17,13 @@ class TestUpdateStatusRootLog:
                 pytest.skip("fastapi/starlette not installed")
 
             import hermes_state
+            from hermes_cli import main_dashboard
             from hermes_constants import get_hermes_home
             from hermes_cli.web_server import app, _SESSION_HEADER_NAME, _SESSION_TOKEN
 
             monkeypatch.setattr(hermes_state, "DEFAULT_DB_PATH", get_hermes_home() / "state.db")
+            # Launches are stubbed here; supervision has its own integration tests.
+            monkeypatch.setattr(main_dashboard, "_get_pid_cgroup_path", lambda pid: None)
 
             self.client = TestClient(app)
             self.client.headers[_SESSION_HEADER_NAME] = _SESSION_TOKEN
@@ -127,7 +130,7 @@ class TestUpdateStatusRootLog:
         data = self.client.get("/api/actions/hermes-update/status?lines=2000").json()
 
         assert data["running"] is False
-        assert data["exit_code"] == (0 if b_outcome == "success" else None)
+        assert data["exit_code"] == (0 if b_outcome == "success" else 1 if b_outcome == "failed" else None)
         assert data.get("action_id") == (b_id if b_outcome == "success" else None)
         assert data["receipt"]["action_id"] == (b_id if b_outcome else a_id)
 
@@ -158,7 +161,7 @@ class TestUpdateStatusRootLog:
 
         data = self.client.get("/api/actions/hermes-update/status?lines=2000").json()
 
-        assert data["exit_code"] == (0 if b_outcome == "success" else None)
+        assert data["exit_code"] == (0 if b_outcome == "success" else 1 if b_outcome == "failed" else None)
         assert "action_id" not in data  # A's root completion marker is not B's
         # The attached receipt names its writer: B's own when it exists, else A's (never B's).
         assert data["receipt"]["action_id"] == (b_id if b_outcome else a_id)

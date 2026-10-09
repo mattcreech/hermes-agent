@@ -353,13 +353,18 @@ def _completed_exit_code(
     """Exit code for an action with no live process: in-memory result, else durable evidence."""
     if result is not None:
         return result.get("exit_code")
-    if durable_action_id:
-        return 0
-    if receipt is not None and receipt.get("outcome") in ("success", "partial"):
+    if receipt is not None and receipt.get("outcome") in ("success", "partial", "failed", "refused", "interrupted"):
         # No in-memory result and no log marker (e.g. log rotated), but THIS
         # action's receipt proves a completed run: report its outcome rather than
         # a null clients time out on. ``partial`` maps to exit 1 like the CLI.
-        return 0 if receipt["outcome"] == "success" else 1
+        recorded = receipt.get("exit_code")
+        if isinstance(recorded, int) and not isinstance(recorded, bool):
+            return recorded
+        return {"success": 0, "partial": 1, "failed": 1, "refused": 2, "interrupted": 130}[receipt["outcome"]]
+    if receipt is not None and receipt.get("outcome") == "running":
+        return None if receipt.get("running") else 1
+    if durable_action_id:
+        return 0
     return None
 
 
@@ -405,7 +410,7 @@ async def get_action_status(name: str, lines: int = 200):
     proc = _ACTION_PROCS.get(name)
     if proc is None:
         result = _ACTION_RESULTS.get(name)
-        running = False
+        running = bool((action_receipt_summary or {}).get("running"))
         pid = result.get("pid") if result else None
         exit_code = _completed_exit_code(result, durable_update_action_id, action_receipt_summary)
     else:
@@ -454,8 +459,10 @@ def _latest_update_receipt_summary(action_id: Optional[str] = None) -> Optional[
         return None
     try:
         post = receipt.get("post_update") or {}
+        from hermes_cli.update_receipt import _owner_alive
+
         return {
-            **{k: receipt.get(k) for k in ("outcome", "started_at", "finished_at", "action_id")},
+            **{k: receipt.get(k) for k in ("outcome", "started_at", "finished_at", "action_id", "exit_code")},
             "pre_sha": (receipt.get("pre_update") or {}).get("sha"),
             "post_sha": post.get("sha"), "post_version": post.get("version"),
             "fleet_states": sorted({str(e.get("state")) for e in receipt.get("fleet") or [] if isinstance(e, dict)}),
@@ -464,6 +471,7 @@ def _latest_update_receipt_summary(action_id: Optional[str] = None) -> Optional[
             "followups": [{"step": str(f.get("step")), "reason": str(f.get("reason") or "")}
                           for f in receipt.get("followups") or [] if isinstance(f, dict)],
             "user_action": receipt.get("user_action") if isinstance(receipt.get("user_action"), dict) else None,
+            "running": receipt.get("outcome") == "running" and _owner_alive(receipt),
         }
     except Exception:
         return None

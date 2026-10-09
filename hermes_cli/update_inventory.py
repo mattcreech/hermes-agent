@@ -268,6 +268,20 @@ def _is_desktop_ssh_ledger_entry(entry: dict) -> bool:
         return False
 
 
+def _systemd_backend_owner(pid: int) -> dict:
+    """Exact live MainPID ownership, including operator-named backend units."""
+    from hermes_platform.host.facts import os_family
+    from hermes_cli import main_dashboard as dashboard
+
+    if os_family() != "linux":
+        return {}
+    unit = dashboard._get_systemd_service_for_pid(pid)
+    if not unit:
+        return {}
+    cgroup = dashboard._get_pid_cgroup_path(pid)
+    return {"systemd_unit": unit, "systemd_scope": dashboard._extract_scope_from_cgroup(cgroup or "")}
+
+
 def _collect_ledger_runtimes(plan: UpdatePlan, seen: set[int]) -> None:
     """Serve/dashboard backends from the spawn ledger — runtimes the gateway collectors can never see
     (a manual `hermes serve --host <ip>` for a remote Desktop, a long-lived `hermes dashboard`).
@@ -290,8 +304,12 @@ def _collect_ledger_runtimes(plan: UpdatePlan, seen: set[int]) -> None:
                 "argv": entry.get("argv") or "", "host": entry.get("host") or "",
                 "port": entry.get("port"), "create_time": entry.get("create_time"),
             }
+            owner = _systemd_backend_owner(pid)
             job = _launchd_owner_for_ledger_entry(entry, pid, launchd_jobs) if launchd_jobs else None
-            if job:
+            if owner:
+                supervisor = "systemd"
+                detail.update(owner)
+            elif job:
                 supervisor, detail["launchd_domain"], detail["launchd_label"] = "launchd", job[0], job[1]
             elif _is_desktop_ssh_ledger_entry(entry):
                 # No local spawner, so the probe below would read manual-serve and file a reminder
