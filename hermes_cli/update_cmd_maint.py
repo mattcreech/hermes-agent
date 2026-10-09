@@ -63,6 +63,11 @@ def _load_updates_cfg() -> dict:
     return updates if isinstance(updates, dict) else {}
 
 
+def _maintained_publication_current_home_only() -> bool:
+    """Opt-in maintained publication may only maintain its owning home."""
+    return (_load_updates_cfg().get("maintained_publication") or {}).get("enabled") is True
+
+
 def _purge_stale_hermes_modules() -> None:
     """Historical updater hook; module-graph surgery cannot complete an update."""
     from hermes_cli._old_updater import stop_for_relaunch
@@ -695,6 +700,11 @@ def _run_quick_snapshots() -> Optional[str]:
         _verify_state_db_after_snapshot(snapshot_id)
         print(f"◆ Pre-update snapshot: {snapshot_id}")
 
+    if _maintained_publication_current_home_only():
+        import hermes_cli.update_cmd_config as _cfg
+        _cfg._LAST_SIBLING_SNAPSHOTS = {}
+        return snapshot_id
+
     # The code swap + fleet restart touch EVERY profile, so each gets the same snapshot
     # under its own state-snapshots/. Best-effort per profile.
     with _best_effort('Sibling profile snapshots failed: %s'):
@@ -847,6 +857,8 @@ def _profile_skill_sync_status(r) -> str:
 
 def _sync_profiles_after_update() -> None:
     """Best-effort per-profile syncs: bundled skills, ``.env`` backfill, Honcho profiles."""
+    if _maintained_publication_current_home_only():
+        return
     # All profiles incl. the active one: seed_profile_skills() subprocesses with an explicit
     # HERMES_HOME, so sync_skills()'s module-level HERMES_HOME cache can't skew it.
     with suppress(Exception):

@@ -42,6 +42,9 @@ def _migrate_sibling_profile_configs() -> list[tuple[str, int, int]]:
     ``_get_default_hermes_home()``, not under ``profiles/``, so a named-profile
     ``hermes update`` still migrates it.
     """
+    from hermes_cli.update_cmd_maint import _maintained_publication_current_home_only
+    if _maintained_publication_current_home_only():
+        return []
     from hermes_cli.config import check_config_version, migrate_config
     migrated: list[tuple[str, int, int]] = []
     with _best_effort('Sibling profile enumeration failed: %s'):
