@@ -227,3 +227,49 @@ otherwise. The update path is derived, not remembered:
 import (and every build script they run) and fails until each is routed or is a
 declared shared hub, and it replays the real classifier's output through the real
 workflow files so a set lane always reaches its job. Related: [macOS bundle updates](macos-bundle-updates.md).
+
+## Opt-in maintained fork publication
+
+The maintained installation can explicitly enable `updates.maintained_publication`:
+
+```yaml
+updates:
+  parked_branch_strategy: update_in_place
+  maintained_publication:
+    enabled: true
+    branch: custom/matt-maintained
+    url: https://github.com/mattcreech/hermes-agent.git
+```
+
+Defaults disable this gate. It runs at completion in the dependency-selected interpreter,
+following native builds and maintenance, before fleet restart. The historical takeover
+completion uses the same gate. The transport captures opt-in intent before Git moves;
+a dependency preparation failure records that publication remains blocked.
+
+The current bounded implementation admits Linux, an explicit `custom/` branch and the
+existing approved fork URL above. It captures clean HEAD, runs the seven carried behavior
+files plus the managed lifecycle regressions in fresh per-file pytest processes with the unchanged conftest and Git guards,
+one isolated home per file (180 seconds per file). The native `pm.testenv.ensure_testenv`
+seam selects a checkout-local side environment from the locked project and dev/test groups,
+with no optional extras. Runtime scratch is bounded and cleaned under the owning home's
+`cache/scratch`. No interpreter path is configured in production. Missing tests fail closed.
+
+Publication requires successful native completion, an unchanged clean HEAD and an existing
+fork branch. It pushes the captured SHA with `--no-force`, then reads back the exact branch
+SHA and rechecks the checkout. It never stages, commits, fetches, switches or drops private
+files. A nonfastforward fork divergence requires independent review and reconciliation.
+
+The native post-commit contract remains: code integration can be `outcome: success` with
+owed work. `managed_publication.status: failed`, the failed `managed` stage and a
+`managed_publication` follow-up distinguish an incomplete maintained lifecycle. The
+existing authenticated action status includes that verdict for the matching action ID
+after reconnect and returns nonzero for a terminal, exactly correlated managed failure,
+even when native committed-code outcome is success. Running actions remain pending.
+Failed admission or behavior tests defer native restart and record restart debt; publication
+or readback debt may restart behavior-verified code. The default native contract is unchanged. Resolve the gate and invoke the
+ordinary update again to retry. There is no timer, watcher or automatic coding/review agent.
+
+Future custom coding follows a separate procedure: isolated worktree, independent review,
+bounded canonical behavior tests, exact intended paths committed, then nonforced exact
+fork publication with readback. Novel official merge conflicts remain a native safe hold;
+this gate cannot resolve semantic conflicts or certify the actual Mac Desktop click.

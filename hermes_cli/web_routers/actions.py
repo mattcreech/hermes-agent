@@ -351,6 +351,11 @@ def _completed_exit_code(
     result: Optional[dict[str, Any]], durable_action_id: Optional[str], receipt: Optional[dict[str, Any]],
 ) -> Optional[int]:
     """Exit code for an action with no live process: in-memory result, else durable evidence."""
+    if (receipt is not None and receipt.get("outcome") in ("success", "partial", "failed", "refused", "interrupted")
+            and (receipt.get("managed_publication") or {}).get("status") == "failed"):
+        return 1
+    if receipt is not None and receipt.get("outcome") == "running":
+        return None if receipt.get("running") else 1
     if result is not None:
         return result.get("exit_code")
     if receipt is not None and receipt.get("outcome") in ("success", "partial", "failed", "refused", "interrupted"):
@@ -361,8 +366,6 @@ def _completed_exit_code(
         if isinstance(recorded, int) and not isinstance(recorded, bool):
             return recorded
         return {"success": 0, "partial": 1, "failed": 1, "refused": 2, "interrupted": 130}[receipt["outcome"]]
-    if receipt is not None and receipt.get("outcome") == "running":
-        return None if receipt.get("running") else 1
     if durable_action_id:
         return 0
     return None
@@ -421,6 +424,9 @@ async def get_action_status(name: str, lines: int = 200):
             with contextlib.suppress(Exception):
                 proc.wait(timeout=1)
             _finish_action(name, exit_code, pid)
+            exit_code = _completed_exit_code({"exit_code": exit_code},
+                                             durable_update_action_id, action_receipt_summary)
+            running = exit_code is None and bool((action_receipt_summary or {}).get("running"))
 
     response = {"name": name, "running": running, "exit_code": exit_code, "pid": pid, "lines": tail}
     if durable_update_action_id:
@@ -463,6 +469,7 @@ def _latest_update_receipt_summary(action_id: Optional[str] = None) -> Optional[
 
         return {
             **{k: receipt.get(k) for k in ("outcome", "started_at", "finished_at", "action_id", "exit_code")},
+            "managed_publication": receipt.get("managed_publication"),
             "pre_sha": (receipt.get("pre_update") or {}).get("sha"),
             "post_sha": post.get("sha"), "post_version": post.get("version"),
             "fleet_states": sorted({str(e.get("state")) for e in receipt.get("fleet") or [] if isinstance(e, dict)}),

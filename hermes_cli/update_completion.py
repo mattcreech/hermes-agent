@@ -30,9 +30,19 @@ def _write_bootstrap_result(request: dict, result_path: Path, code: int, receipt
     """The bootstrap child's answer; windows_resume stays the parent's token (and its atexit net)."""
     _write_json(result_path, {
         "schema": 1, "update_id": request["receipt"]["update_id"], "exit_code": code,
-        "receipt": receipt, "windows_resume": None, "pm_receipt": request.get("pm_receipt"),
+        "receipt": receipt, "windows_resume": _deferred_managed_resume(request, receipt),
+        "pm_receipt": request.get("pm_receipt"),
     })
     return code
+
+
+def _deferred_managed_resume(request: dict, receipt: dict | None) -> dict | None:
+    """Settle the parent's resume attempt while retaining its durable paused-set debt."""
+    managed = (receipt or {}).get("managed_publication") or {}
+    if (request.get("managed_publication_required") and managed.get("status") == "failed"
+            and managed.get("stage") not in ("publication", "readback")):
+        return request.get("windows_resume")
+    return None
 
 
 def _bind_and_resume(proc: subprocess.Popen, request: dict, request_path: Path) -> None:
@@ -265,6 +275,7 @@ def settle_lost_completion(request: dict, reason: str) -> dict:
             print(f"  ⚠ Could not record the owed source-update tail: {exc}")
         _report_desktop_build_owed(request, _running_record(request), "the update completion did not finish")
         update_receipt.resume_run_record()  # the child's persisted stages, never this stale snapshot
+        _record_managed_blocked(request, "completion")
         update_receipt.record_followup("completion", reason, retry="the next launch or `hermes update` finishes it")
         parked = not _record_owed_user_action(request)
         if parked:
@@ -275,7 +286,8 @@ def settle_lost_completion(request: dict, reason: str) -> dict:
     code = 130 if outcome == "interrupted" else 1 if outcome == "partial" else 0
     if code == 0:
         _publish_gateway_success(request)
-    return {"exit_code": code, "receipt": receipt, "windows_resume": None, "pm_receipt": None}
+    return {"exit_code": code, "receipt": receipt,
+            "windows_resume": _deferred_managed_resume(request, receipt), "pm_receipt": None}
 
 
 def _settle_after_commit(request: dict, result_path: Path, step: str, reason: str) -> int:
@@ -299,6 +311,7 @@ def _settle_after_commit(request: dict, result_path: Path, step: str, reason: st
         record = _running_record(request) or request["receipt"]
         _report_desktop_build_owed(request, record, f"{step} did not finish")
         _resume_receipt(record)
+        _record_managed_blocked(request, step)
         update_receipt.record_stage("deps" if step == "dependencies" else "build", "failed")
         update_receipt.record_followup(step, reason, retry="dependencies not installed yet — the next launch retries"
                                        if step == "dependencies" else "the next launch or `hermes update` retries it")
@@ -310,6 +323,21 @@ def _settle_after_commit(request: dict, result_path: Path, step: str, reason: st
     if code == 0:
         _publish_gateway_success(request)
     return _write_bootstrap_result(request, result_path, code, receipt)
+
+
+def _record_managed_blocked(request: dict, step: str) -> None:
+    """No dependency-selected gate can run: preserve opt-in failure without app imports."""
+    if not request.get("managed_publication_required"):
+        return
+    from hermes_cli import update_receipt
+
+    update_receipt.record_fact("managed_publication", {
+        "sha": request.get("expected_sha"), "status": "failed", "stage": step})
+    update_receipt.record_stage("managed", "failed", stage=step)
+    update_receipt.record_followup("gateway_restart", "maintained completion was not verified; restart deferred",
+                                  retry="finish the maintained gate before restarting the selected code")
+    update_receipt.record_followup("managed_publication", f"native {step} did not complete",
+                                  retry="finish native completion with `hermes update` before publication")
 
 
 def _prepare(request: dict, request_path: Path, result_path: Path) -> int:
@@ -386,6 +414,10 @@ def _complete_selected(request: dict) -> bool:
 
     root = Path(request["source"])
     main.PROJECT_ROOT = root
+    managed = None
+    if request.get("managed_publication_required"):
+        from hermes_cli import update_managed
+        managed = update_managed.begin(root, expected_sha=request.get("expected_sha"), required=True)
     complete = _record_owed_user_action(request)
     update_cmd_config._LAST_SIBLING_SNAPSHOTS = request["sibling_snapshots"]
     plan_data = request["plan"]
@@ -407,7 +439,8 @@ def _complete_selected(request: dict) -> bool:
             pre_update_version=request["pre_update_version"],
             completion_message=request.get("completion_message"),
             announce=None if request.get("completion_message") else "\n✓ Code updated!",
-            followups=followups, before_build=lambda: _resume_paused_before_build(request))
+            followups=followups, before_build=(None if managed is not None
+                                            else lambda: _resume_paused_before_build(request)))
     except (Exception, SystemExit) as exc:  # health: allow BLE001 -- e.g. the shared update lock refused the tail
         reason = str(exc) or type(exc).__name__
         # The tail's steps catch their own failures, so a raise here means the build never ran.
@@ -416,6 +449,15 @@ def _complete_selected(request: dict) -> bool:
         followups.append(("completion", reason))
     tail_owed = any(step in TAIL_FOLLOWUPS for step, _ in followups)
     record_build_stage(followups)
+    managed_ok = True
+    if managed is not None:
+        managed_ok = update_managed.finish(root, managed, native_ok=bool(runtime_safe) and complete and not followups)
+        if not update_managed.restart_allowed(managed):
+            record_followup("gateway_restart", "maintained behavior admission failed; restart deferred",
+                            retry="resolve the maintained gate before restarting the selected code")
+            record_stage("restart", "skipped")
+            request["managed_restart_deferred"] = True
+            return complete
     if not tail_owed:
         from hermes_cli.venv_sync import clear_completion
         clear_completion(root)
@@ -445,7 +487,7 @@ def _complete_selected(request: dict) -> bool:
     update_cmd._resume_windows_gateways_and_merge_outcome(restart, request["windows_resume"], request["gateway_mode"])
     update_cmd._verify_fleet_after_update(
         restart, _pre_update_plan=plan, _windows_gateway_resume=request["windows_resume"],
-        update_complete=bool(runtime_safe) and complete)
+        update_complete=bool(runtime_safe) and complete and managed_ok)
     return complete
 
 
@@ -520,7 +562,8 @@ def _finish(request: dict, result_path: Path) -> int:
         # token is updated from the response; it acts only if this process dies.
         try:
             from hermes_cli.update_cmd import _resume_windows_gateways_after_update
-            _resume_windows_gateways_after_update(request["windows_resume"])
+            if not request.get("managed_restart_deferred"):
+                _resume_windows_gateways_after_update(request["windows_resume"])
         except Exception as exc:
             update_receipt.owe_followup(request["receipt"]["update_id"], "windows_resume",
                                         f"Windows gateway recovery failed: {exc}")

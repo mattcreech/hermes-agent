@@ -727,12 +727,15 @@ def _print_update_check_result(behind: int | None, compare_branch: str) -> None:
 def _source_completion_request(opts, plan, snapshot_id, windows_resume, desktop, gateway_mode) -> dict:
     """Freeze data before mutation; no pre-swap module objects cross the seam."""
     from copy import deepcopy
+    from hermes_cli.config import load_config
     current = _completion_receipt._current.get()
     if current is None:
         _completion_receipt.begin_update_receipt()
         current = _completion_receipt._current.get()
     return {
         "schema": 1, "source": str(_m().PROJECT_ROOT.resolve()),
+        "managed_publication_required": ((load_config().get("updates") or {}).get(
+            "maintained_publication") or {}).get("enabled") is True,
         "home": str(get_hermes_home()), "branch": "main", "desktop": desktop,
         "assume_yes": opts.assume_yes, "gateway_mode": gateway_mode,
         "no_gateway_restart": getattr(opts, "no_gateway_restart", False),

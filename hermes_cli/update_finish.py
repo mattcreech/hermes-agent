@@ -8,7 +8,7 @@ import sys
 
 def finish_update(*, root, assume_yes, gateway_mode, pre_update_snapshot_id,
                   had_desktop_app_before_update, pre_update_version,
-                  plan, windows_resume, followups=None) -> None:
+                  plan, windows_resume, followups=None, managed_state=None) -> bool:
     """Finish the selected checkout; never fetch, switch branches or restore a stash.
 
     Same contract as the current completion (C3): the code is committed, so a failed build,
@@ -26,6 +26,7 @@ def finish_update(*, root, assume_yes, gateway_mode, pre_update_snapshot_id,
     from hermes_cli import update_receipt
     from hermes_cli.update_receipt import TAIL_FOLLOWUPS, record_build_stage, record_followup
 
+    managed = managed_state
     owed = followups if followups is not None else []
     runtime_safe = False
     try:
@@ -41,6 +42,15 @@ def finish_update(*, root, assume_yes, gateway_mode, pre_update_snapshot_id,
         owed.append(("maintenance", reason))
     tail_owed = any(step in TAIL_FOLLOWUPS for step, _ in owed)
     record_build_stage(owed)
+    managed_ok = True
+    if managed is not None:
+        from hermes_cli import update_managed
+        managed_ok = update_managed.finish(Path(root), managed, native_ok=bool(runtime_safe) and not owed)
+        if not update_managed.restart_allowed(managed):
+            record_followup("gateway_restart", "maintained behavior admission failed; restart deferred",
+                            retry="resolve the maintained gate before restarting the selected code")
+            update_receipt.record_stage("restart", "skipped")
+            return False
     if not tail_owed:
         from hermes_cli.source_stamp import write_source_stamp
         from hermes_cli.venv_sync import clear_completion
@@ -61,9 +71,10 @@ def finish_update(*, root, assume_yes, gateway_mode, pre_update_snapshot_id,
         restarted = _restart_gateway_fleet_after_update(plan, gateway_mode)
         _resume_windows_gateways_and_merge_outcome(restarted, windows_resume, gateway_mode)
         _verify_fleet_after_update(restarted, _pre_update_plan=plan, _windows_gateway_resume=windows_resume,
-                                  update_complete=bool(runtime_safe) and not tail_owed)
+                                  update_complete=bool(runtime_safe) and not tail_owed and managed_ok)
     except (Exception, SystemExit) as exc:  # health: allow BLE001 -- the code is committed (C3): the fleet obligation stays armed
         update_receipt.owe_followup(update_id, "gateway_restart", str(exc) or type(exc).__name__)
+    return True
 
 
 def _restore_plan(data):
@@ -90,6 +101,7 @@ def main(context: Path, result: Path) -> int:
     restarting = request.get("restart_update", False)
     cli_started = False
     begun = False
+    restart_deferred = False
     code = 1
     try:
         if not restarting:
@@ -143,6 +155,11 @@ def main(context: Path, result: Path) -> int:
                     arm_completion(root)
                 except OSError as exc:  # stale dependencies still trigger the next launch's sync
                     print(f"  ⚠ Could not record the owed source-update tail: {exc}")
+                from hermes_cli.config import load_config
+                managed_state = None
+                if ((load_config().get("updates") or {}).get("maintained_publication") or {}).get("enabled") is True:
+                    from hermes_cli import update_managed
+                    managed_state = update_managed.begin(root)
                 owed: list[tuple[str, str]] = []
                 try:
                     build_update_products(root, desktop=desktop)
@@ -150,12 +167,12 @@ def main(context: Path, result: Path) -> int:
                     reason = str(exc) or type(exc).__name__
                     update_receipt.record_followup("build", reason)
                     owed.append(("build", reason))
-                finish_update(
+                restart_deferred = not finish_update(
                     root=root, assume_yes=request["assume_yes"], gateway_mode=request["gateway_mode"],
                     pre_update_snapshot_id=request.get("pre_update_snapshot_id"),
                     had_desktop_app_before_update=desktop,
                     pre_update_version=request.get("pre_update_version"),
-                    plan=plan, windows_resume=token, followups=owed,
+                    plan=plan, windows_resume=token, followups=owed, managed_state=managed_state,
                 )
         code = 0
     except SystemExit as exc:
@@ -179,7 +196,7 @@ def main(context: Path, result: Path) -> int:
             update_receipt.begin_update_receipt(previous=request.get("receipt"), correlation_id=request["update_id"])
             begun = update_receipt._current.get() is not None
         attempted = False
-        if resume is not None:
+        if resume is not None and not restart_deferred:
             try:
                 resume(token)
             except Exception as exc:
@@ -189,7 +206,7 @@ def main(context: Path, result: Path) -> int:
         written = update_receipt.finalize_pending_update_receipt(code, "historical takeover completion")
         result.write_text(json.dumps({
             # An attempt that failed is reported here: the historical parent must not replay it.
-            "resume_handled": attempted or not token or not token.get("resume_needed"),
+            "resume_handled": restart_deferred or attempted or not token or not token.get("resume_needed"),
             "receipt_handled": handled or written is not None,
         }), encoding="utf-8")
     return code

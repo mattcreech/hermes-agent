@@ -805,3 +805,14 @@ def test_only_correlated_terminal_receipt_can_acknowledge_success(transition, en
     response = run_completion(request)
     assert response["exit_code"] == (0 if correlated else 1)
     assert response["receipt"] == (receipt if correlated else None)
+
+
+@pytest.mark.parametrize("flag", [None, False])
+def test_opt_out_completion_needs_no_managed_module_or_config(transition, flag):
+    root, _git, _old, _new, request = transition
+    shutil.copy2(update_completion.__file__, root / "hermes_cli/update_completion.py")
+    if flag is not None:
+        request["managed_publication_required"] = flag
+    assert not (root / "hermes_cli/update_managed.py").exists()
+    assert not (root / "hermes_cli/config.py").exists()
+    assert update_completion.run_completion(request)["exit_code"] == 0
