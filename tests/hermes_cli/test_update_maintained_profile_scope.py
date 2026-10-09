@@ -1,5 +1,6 @@
 """Maintained publication confines native update maintenance to the owning home."""
 from pathlib import Path
+import sqlite3
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -97,3 +98,71 @@ def test_current_home_bundled_sync_remains_native(profile_scope):
     witness = next(bundled.rglob('SKILL.md'))
     assert (profile_scope.home / 'skills' / witness.relative_to(bundled)).read_bytes() == witness.read_bytes()
     assert not (profile_scope.sibling / 'skills').exists()
+
+
+def test_database_restore_keeps_current_home_and_scopes_siblings(profile_scope, monkeypatch):
+    state = profile_scope
+    for home in (state.home, state.sibling):
+        snapshot = backup._quick_snapshot_root(home) / '20261009-pre-update' / 'state.db'
+        snapshot.parent.mkdir(parents=True)
+        with sqlite3.connect(snapshot) as db:
+            db.execute('CREATE TABLE witness (value TEXT)')
+            db.execute("INSERT INTO witness VALUES ('preserved')")
+        (home / 'state.db').write_bytes(b'corrupt database')
+    before = (state.sibling / 'state.db').read_bytes()
+    enumerate_homes = Mock(wraps=backup._sibling_profile_homes)
+    monkeypatch.setattr(backup, '_sibling_profile_homes', enumerate_homes)
+    update_cmd_maint._verify_and_restore_state_dbs_post_update()
+    with sqlite3.connect(state.home / 'state.db') as db:
+        assert db.execute('SELECT value FROM witness').fetchall() == [('preserved',)]
+    if state.enabled:
+        enumerate_homes.assert_not_called()
+        assert (state.sibling / 'state.db').read_bytes() == before
+    else:
+        enumerate_homes.assert_called_once()
+        with sqlite3.connect(state.sibling / 'state.db') as db:
+            assert db.execute('SELECT value FROM witness').fetchall() == [('preserved',)]
+
+
+def test_catalog_invalidation_keeps_current_home_and_scopes_siblings(profile_scope, monkeypatch):
+    state = profile_scope
+    for home in (state.home, state.sibling):
+        cache = home / 'cache' / 'plugin-catalog.json'
+        cache.parent.mkdir()
+        cache.write_text('{"entries": [], "removed": []}', encoding='utf-8')
+    peer_cache = state.sibling / 'cache' / 'plugin-catalog.json'
+    before = peer_cache.read_bytes()
+    enumerate_homes = Mock(wraps=backup._sibling_profile_homes)
+    monkeypatch.setattr(backup, '_sibling_profile_homes', enumerate_homes)
+    update_cmd_maint._invalidate_live_plugin_catalog_caches()
+    assert not (state.home / 'cache' / 'plugin-catalog.json').exists()
+    if state.enabled:
+        enumerate_homes.assert_not_called()
+        assert peer_cache.read_bytes() == before
+    else:
+        enumerate_homes.assert_called_once()
+        assert not peer_cache.exists()
+
+
+def test_relay_migration_keeps_current_home_and_scopes_siblings(profile_scope, monkeypatch):
+    from hermes_cli import relay_plugin_migrate as relay
+
+    state = profile_scope
+    legacy = 'HERMES_NEMO_RELAY_ATOF_ENABLED=1\n'
+    for home in (state.home, state.sibling):
+        (home / '.env').write_text(legacy, encoding='utf-8')
+    # Exercise the real leaf writer without requiring the optional Relay dependency.
+    monkeypatch.setattr(relay, 'validate_relay_plugin_payload', lambda payload: [])
+    enumerate_homes = Mock(wraps=profiles._iter_named_profile_dirs)
+    monkeypatch.setattr(profiles, '_iter_named_profile_dirs', enumerate_homes)
+    update_cmd_maint._migrate_relay_exporter_env()
+    assert (state.home / relay.RELAY_PLUGINS_TOML_NAME).is_file()
+    assert relay.RELAY_PLUGINS_CONFIG_ENV + '=' in (state.home / '.env').read_text(encoding='utf-8')
+    if state.enabled:
+        enumerate_homes.assert_not_called()
+        assert (state.sibling / '.env').read_text(encoding='utf-8') == legacy
+        assert not (state.sibling / relay.RELAY_PLUGINS_TOML_NAME).exists()
+    else:
+        enumerate_homes.assert_called_once()
+        assert (state.sibling / relay.RELAY_PLUGINS_TOML_NAME).is_file()
+        assert (state.sibling / '.env').read_text(encoding='utf-8') != legacy

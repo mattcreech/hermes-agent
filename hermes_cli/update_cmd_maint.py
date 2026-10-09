@@ -503,6 +503,8 @@ def _verify_and_restore_state_dbs_post_update() -> None:
     from hermes_cli.update_cmd import get_hermes_home
     home = get_hermes_home()
     _verify_and_restore_one_state_db(home, label="default home")
+    if _maintained_publication_current_home_only():
+        return
     with _best_effort('Sibling-profile state.db guard sweep failed: %s'):
         from hermes_cli.backup import _sibling_profile_homes
         for name, profile_home in _sibling_profile_homes(home):
@@ -522,6 +524,8 @@ def _invalidate_live_plugin_catalog_caches() -> None:
     home = get_hermes_home()
     from hermes_cli.plugin_catalog import invalidate_live_cache_for_home
     invalidate_live_cache_for_home(home)
+    if _maintained_publication_current_home_only():
+        return
     with suppress(Exception):
         from hermes_cli.backup import _sibling_profile_homes
         for _name, profile_home in _sibling_profile_homes(home):
@@ -986,6 +990,11 @@ def _print_post_update_notices_and_self_heals() -> None:
 
 
 def _migrate_relay_exporter_env() -> None:
+    if _maintained_publication_current_home_only():
+        from hermes_cli.update_cmd import get_hermes_home
+        from hermes_cli.relay_plugin_migrate import migrate_profile_relay_env, print_relay_migration_report
+        print_relay_migration_report([migrate_profile_relay_env(get_hermes_home())])
+        return
     from hermes_cli.relay_plugin_migrate import run_relay_migration_after_update
     run_relay_migration_after_update()
 
