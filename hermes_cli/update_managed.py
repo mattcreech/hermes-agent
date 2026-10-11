@@ -6,6 +6,7 @@ Publication never forces a push. Opt-in repair uses a separately verified isolat
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 from pathlib import Path
 import signal
@@ -67,7 +68,8 @@ def _run(root: Path, argv: list[str], *, env=None, timeout=60, failure_log: Path
 def _git(root: Path, *args: str) -> str:
     from hermes_cli.update_cmd import _base_git_cmd
 
-    return _run(root, [*_base_git_cmd(), *args], env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+    return _run(root, [*_base_git_cmd(), *args], env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                timeout=600 if args and args[0] == "push" else 60)
 
 
 def _identity(root: Path, settings: dict) -> str:
@@ -85,6 +87,35 @@ def _identity(root: Path, settings: dict) -> str:
         raise ValueError("task-private artifacts are tracked in the maintained checkout")
     return _git(root, "rev-parse", "HEAD")
 
+
+
+def _restart_hold_path() -> Path:
+    from hermes_constants import get_hermes_home
+
+    return get_hermes_home() / "logs" / "maintained-tests" / "restart-hold.json"
+
+
+def restart_held() -> bool:
+    """Startup recovery must not bypass an unfinished maintained admission."""
+    return _restart_hold_path().exists()
+
+
+def _hold_restart(sha: str | None) -> None:
+    path = _restart_hold_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f"restart-hold-{os.getpid()}.tmp")
+    try:
+        temporary.write_text(json.dumps({"sha": sha, "reason": "maintained verification pending"}), encoding="utf-8")
+        temporary.chmod(0o600)
+        temporary.replace(path)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            temporary.unlink()
+
+
+def _release_restart() -> None:
+    with contextlib.suppress(FileNotFoundError):
+        _restart_hold_path().unlink()
 
 def begin(root: Path, *, expected_sha: str | None = None, required: bool = False) -> dict | None:
     """Capture the selected SHA before native completion work; opt-out is a no-op."""
@@ -107,6 +138,10 @@ def begin(root: Path, *, expected_sha: str | None = None, required: bool = False
             raise ValueError("selected checkout HEAD differs from the native update target")
     except (OSError, ValueError, subprocess.SubprocessError, RuntimeError) as exc:
         state["error"] = str(exc)
+    try:
+        _hold_restart(state["sha"])
+    except OSError as exc:
+        state["error"] = f"cannot persist maintained restart admission: {exc}"
     record_fact("managed_publication", {"sha": state["sha"], "status": "pending"})
     record_stage("managed", "running", sha=state["sha"] or "")
     return state
@@ -170,6 +205,7 @@ def finish(root: Path, state: dict | None, *, native_ok: bool) -> bool:
         stage = "checkout"
         if _identity(root, settings) != sha:
             raise ValueError("HEAD changed during maintained verification")
+        _release_restart()
         ref = f"refs/heads/{settings['branch']}"
         stage = "publication"
         # Ref must already exist: this is publication to the approved existing branch.
@@ -179,6 +215,8 @@ def finish(root: Path, state: dict | None, *, native_ok: bool) -> bool:
         if _identity(root, settings) != sha:
             raise ValueError("HEAD changed before maintained publication")
         stage = "publication"
+        print("  → Publishing verified customizations to the existing fork…", flush=True)
+        record_stage("managed_publication", "running", sha=sha)
         _git(root, "push", "--no-force", settings["url"], f"{sha}:{ref}")
         stage = "readback"
         if _git(root, "ls-remote", "--exit-code", settings["url"], ref).split() != [sha, ref]:

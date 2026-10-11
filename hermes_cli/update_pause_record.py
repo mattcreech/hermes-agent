@@ -1028,6 +1028,12 @@ def recover(argv: list[str] | None = None) -> None:
     if command[:1] == ["update"] or command[:2] == ["gateway", "run"]:
         return  # the update adopts it itself; a booting gateway must not block on its siblings
     try:
+        from hermes_cli.update_managed import restart_held
+
+        if restart_held():
+            print("  ⚠ Maintained behavior verification is unfinished; paused gateways remain held. "
+                  "Run `hermes update`; details: /api/hermes/update/details", file=sys.stderr)
+            return
         retire_redundant()
         for src, _body in orphans():
             won = claim(src)

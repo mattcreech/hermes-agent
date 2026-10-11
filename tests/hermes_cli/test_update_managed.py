@@ -417,3 +417,21 @@ def test_timeout_keeps_partial_diagnostics(tmp_path):
     assert "started behavior tests" in log.read_text()
     assert "exceeded its deadline" in log.read_text()
     assert log.stat().st_mode & 0o777 == 0o600
+
+
+def test_failed_admission_remains_held_across_unrelated_launches(checkout, monkeypatch):
+    from hermes_cli import update_pause_record
+
+    root, _fork, _calls = checkout
+    state = managed.begin(root)
+    assert managed.restart_held()
+    monkeypatch.setattr(managed, "_tests", lambda *_: (_ for _ in ()).throw(RuntimeError("behavior failure")))
+    assert not managed.finish(root, state, native_ok=True)
+    assert managed.restart_held()
+    monkeypatch.setattr(update_pause_record, "retire_redundant", lambda: pytest.fail("startup bypassed admission"))
+    update_pause_record.recover(["config", "get", "model"])
+    assert managed.restart_held()
+    monkeypatch.setattr(managed, "_tests", lambda *_: None)
+    state = managed.begin(root)
+    assert managed.finish(root, state, native_ok=True)
+    assert not managed.restart_held()

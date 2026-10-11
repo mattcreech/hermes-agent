@@ -257,7 +257,8 @@ with no optional extras. Runtime scratch is bounded and cleaned under the owning
 
 Publication requires successful native completion, an unchanged clean HEAD and an existing
 fork branch. It pushes the captured SHA with `--no-force`, then reads back the exact branch
-SHA and rechecks the checkout. Publication does not stage, commit, fetch, switch or drop private files.
+SHA and rechecks the checkout. Pushes allow ten minutes to hydrate missing blobs
+in a partial clone; ordinary Git identity checks remain bounded at one minute. Publication does not stage, commit, fetch, switch or drop private files.
 Opt-in repair separately fast-forwards a verified repair commit from an isolated clone. A nonfastforward fork divergence requires independent review and reconciliation.
 
 The native post-commit contract remains: code integration can be `outcome: success` with
@@ -266,6 +267,9 @@ owed work. `managed_publication.status: failed`, the failed `managed` stage and 
 existing authenticated action status includes that verdict for the matching action ID
 after reconnect and returns nonzero for a terminal, exactly correlated managed failure,
 even when native committed-code outcome is success. Running actions remain pending.
+Admission persists a restart hold before native completion. A failed or interrupted
+gate retains it across unrelated CLI launches, so orphan-pause recovery cannot bypass
+verification. Successful identity and behavior verification releases it.
 Failed admission or behavior tests defer native restart and record restart debt; publication
 or readback debt may restart behavior-verified code. The default native contract is unchanged. Resolve the gate and invoke the
 ordinary update again to retry. There is no timer or watcher.
