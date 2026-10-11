@@ -292,7 +292,8 @@ Python files, including conflicts in tests, stop for inspection. Compatibility-t
 failures may repair obsolete fixture setup but cannot remove existing test assertions
 or parameter cases. Repair excludes dependency manifests, frontend, credential/state
 files and its own admission/restart machinery. The owner validates and applies the
-patch, runs the maintained tests, checks both merge ancestors and unchanged clean
+patch with native Git hunk recounting (incorrect model line counts need no
+second inference call), runs the maintained tests, checks both merge ancestors and unchanged clean
 production identity, records restart debt, then fast-forwards. Normal completion
 verifies native dependencies/builds and behavior before nonforced fork publication
 and restart. Failed, unavailable or timed-out repair retains the original checkout

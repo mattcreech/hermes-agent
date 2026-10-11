@@ -175,3 +175,15 @@ def test_source_context_includes_failing_test_and_imported_code(tmp_path):
     assert "def check(): return 42" in text
     assert "from hermes_cli.source_check import check" in text
     assert len(text) < 160000
+
+
+def test_git_recounts_inaccurate_inference_hunk_lengths(tmp_path):
+    root = tmp_path / "checkout"
+    (root / "hermes_cli").mkdir(parents=True)
+    name = "hermes_cli/source_check.py"
+    (root / name).write_text("answer = 2\n")
+    git(root, "init")
+    git(root, "add", ".")
+    patch = PATCH.replace("@@ -1 +1 @@", "@@ -1,7 +1,7 @@")
+    assert repair._validate_patch(root, patch, {name}, {name: "answer = 2\n"}) == [name]
+    assert (root / name).read_text() == "answer = 3\n"

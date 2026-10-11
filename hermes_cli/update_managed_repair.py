@@ -32,15 +32,15 @@ def _validate_patch(candidate: Path, patch: str, allowed: set[str], originals: d
     patch_file = candidate.parent / "repair.patch"
     patch_file.write_text(patch, encoding="utf-8")
     paths = [row.split("\t", 2)[2] for row in _run(candidate, [
-        "git", "apply", "--numstat", str(patch_file)]).splitlines()]
+        "git", "apply", "--recount", "--numstat", str(patch_file)]).splitlines()]
     if not paths or not set(paths) <= allowed:
         raise ValueError("repair touches paths outside the carried customization scope")
     for name in paths:
         path = candidate / name
         if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(candidate.resolve()):
             raise ValueError("repair requires an existing regular Python file")
-    _run(candidate, ["git", "apply", "--check", str(patch_file)])
-    _run(candidate, ["git", "apply", str(patch_file)])
+    _run(candidate, ["git", "apply", "--recount", "--check", str(patch_file)])
+    _run(candidate, ["git", "apply", "--recount", str(patch_file)])
     for name in paths:
         path = candidate / name
         if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(candidate.resolve()):
