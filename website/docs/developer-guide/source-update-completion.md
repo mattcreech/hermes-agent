@@ -237,6 +237,7 @@ updates:
   parked_branch_strategy: update_in_place
   maintained_publication:
     enabled: true
+    auto_repair: true  # optional, uses existing Codex login only after a failure
     branch: custom/matt-maintained
     url: https://github.com/mattcreech/hermes-agent.git
 ```
@@ -247,8 +248,8 @@ completion uses the same gate. The transport captures opt-in intent before Git m
 a dependency preparation failure records that publication remains blocked.
 
 The current bounded implementation admits Linux, an explicit `custom/` branch and the
-existing approved fork URL above. It captures clean HEAD, runs the seven carried behavior
-files plus the managed lifecycle regressions in fresh per-file pytest processes with the unchanged conftest and Git guards,
+existing approved fork URL above. It captures clean HEAD, runs the carried behavior
+files plus the managed lifecycle, repair, diagnostics and merge regressions in fresh per-file pytest processes with the unchanged conftest and Git guards,
 one isolated home per file (180 seconds per file). The native `pm.testenv.ensure_testenv`
 seam selects a checkout-local side environment from the locked project and dev/test groups,
 with no optional extras. Runtime scratch is bounded and cleaned under the owning home's
@@ -256,8 +257,8 @@ with no optional extras. Runtime scratch is bounded and cleaned under the owning
 
 Publication requires successful native completion, an unchanged clean HEAD and an existing
 fork branch. It pushes the captured SHA with `--no-force`, then reads back the exact branch
-SHA and rechecks the checkout. It never stages, commits, fetches, switches or drops private
-files. A nonfastforward fork divergence requires independent review and reconciliation.
+SHA and rechecks the checkout. Publication does not stage, commit, fetch, switch or drop private files.
+Opt-in repair separately fast-forwards a verified repair commit from an isolated clone. A nonfastforward fork divergence requires independent review and reconciliation.
 
 The native post-commit contract remains: code integration can be `outcome: success` with
 owed work. `managed_publication.status: failed`, the failed `managed` stage and a
@@ -267,9 +268,34 @@ after reconnect and returns nonzero for a terminal, exactly correlated managed f
 even when native committed-code outcome is success. Running actions remain pending.
 Failed admission or behavior tests defer native restart and record restart debt; publication
 or readback debt may restart behavior-verified code. The default native contract is unchanged. Resolve the gate and invoke the
-ordinary update again to retry. There is no timer, watcher or automatic coding/review agent.
+ordinary update again to retry. There is no timer or watcher.
+
+The canonical per-file runner retries a failed test file once in a fresh process.
+Failures and timeouts retain private logs under `logs/maintained-tests/` and report
+an actual failed test name instead of `RuntimeError`. Authenticated
+`GET /api/hermes/update/details?action_id=<id>` returns bounded diagnostic output
+for that exact action; omitting the ID returns the latest update. Status summaries
+advertise `details_path` and the `managed_repair` verdict.
+
+Git `rerere.enabled=true` and `rerere.autoupdate=true` allow the native merge to
+finish an already learned, cleanly staged resolution, subject to the same behavior gate.
+Unfamiliar conflicts abort the production merge first. With `auto_repair: true`,
+one bounded Codex attempt may propose a patch in a private clone, using the existing
+Codex login and its read-only sandbox. Bounded source excerpts are supplied directly
+so the proposal requires no shell/tool access. Only one inference attempt is allowed
+across merge and completion in a run. New conflicts outside carried implementation
+Python files, including conflicts in tests, stop for inspection. Compatibility-test
+failures may repair obsolete fixture setup but cannot remove existing test assertions
+or parameter cases. Repair excludes dependency manifests, frontend, credential/state
+files and its own admission/restart machinery. The owner validates and applies the
+patch, runs the maintained tests, checks both merge ancestors and unchanged clean
+production identity, records restart debt, then fast-forwards. Normal completion
+verifies native dependencies/builds and behavior before nonforced fork publication
+and restart. Failed, unavailable or timed-out repair retains the original checkout
+and diagnostics; no inference loop is launched. Passing tests verify the declared
+contracts, not arbitrary future semantic compatibility.
 
 Future custom coding follows a separate procedure: isolated worktree, independent review,
 bounded canonical behavior tests, exact intended paths committed, then nonforced exact
-fork publication with readback. Novel official merge conflicts remain a native safe hold;
-this gate cannot resolve semantic conflicts or certify the actual Mac Desktop click.
+fork publication with readback. Updates use the configured `main` subscription. Explicit channel/tag changes need
+separate preservation review. This gate cannot certify the actual Mac Desktop click.

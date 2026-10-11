@@ -10,7 +10,7 @@ import pytest
 
 from hermes_cli import main, update_cmd
 from tests.hermes_cli.test_update_parked_branch_guard import (
-    _git, _patch_update_flow, repo_pair as repo_pair,
+    _git, _patch_update_flow, repo_pair as repo_pair,  # noqa: PLC0414 — imported pytest fixture
 )
 
 
@@ -27,6 +27,10 @@ def maintained_repo(repo_pair, monkeypatch):
     _git(repo_pair, "add", "maintained.txt")
     _git(repo_pair, "commit", "-qm", "maintained behavior")
     _patch_update_flow(monkeypatch, repo_pair)
+    # The runtime now retargets commands to their owning PM install. This real
+    # Git fixture owns its command; it must never retarget to the test Python's
+    # host installation before exercising the native update flow.
+    monkeypatch.setattr("hermes_cli.update_owning_install.retarget_to_owning_install", lambda root: None)
     monkeypatch.setattr(config, "load_config", lambda: {
         "updates": {"parked_branch_strategy": "update_in_place"}})
     monkeypatch.setattr(update_cmd, "_complete_source_update", lambda *a, **k: (

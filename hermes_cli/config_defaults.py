@@ -2378,7 +2378,7 @@ DEFAULT_CONFIG = {
         # e.g. on non-admin accounts where /Applications isn't writable.
         "refresh_cua_driver": True,
         # Explicit maintained branch gate at update completion; disabled on ordinary installs.
-        "maintained_publication": {"enabled": False, "branch": "", "url": ""},
+        "maintained_publication": {"enabled": False, "branch": "", "url": "", "auto_repair": False},
     },
     # LSP diagnostics (pyright, gopls, rust-analyzer...) in the post-write lint check of
     # write_file/patch. Runs only when the cwd or edited file is inside a git worktree; otherwise

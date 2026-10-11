@@ -152,12 +152,16 @@ def test_canonical_runner_environment_is_fresh_per_file(tmp_path, monkeypatch):
         file.touch()
     calls = []
 
-    def run(root, argv, *, env, timeout):
+    def run(root, argv, *, env, timeout, failure_log):
         calls.append((argv, env, timeout))
         assert "INVOCATION_ID" not in env and "OPENAI_API_KEY" not in env
         assert Path(env["HOME"]).is_dir()
         assert str(root) not in env["HOME"]
-        assert Path(argv[argv.index("--basetemp") + 1]).is_relative_to(env["HOME"])
+        assert env["HERMES_PYTHON"] == str(python)
+        assert argv[:2] == ["/bin/bash", "scripts/run_tests.sh"]
+        assert all(test in argv for test in managed.TEST_FILES)
+        assert argv[argv.index("--file-retries") + 1] == "1"
+        assert failure_log.is_relative_to(profile / "logs/maintained-tests")
 
     monkeypatch.setattr(managed, "_run", run)
     def ensure(source, extras):
@@ -167,9 +171,18 @@ def test_canonical_runner_environment_is_fresh_per_file(tmp_path, monkeypatch):
     managed._tests(root)
     assert all(Path(env["HOME"]).is_relative_to(profile / "cache/scratch") for _, env, _ in calls)
     assert not list((profile / "cache/scratch").iterdir())
-    assert len(calls) == len(managed.TEST_FILES)
+    assert len(calls) == 1
     assert len({env["HOME"] for _, env, _ in calls}) == len(calls)
-    assert all(argv[:3] == [str(python), "-m", "pytest"] for argv, _, _ in calls)
+
+
+def test_failed_verification_keeps_readable_diagnostics(tmp_path):
+    log = tmp_path / "logs" / "verification.log"
+    with pytest.raises(RuntimeError, match="diagnostics:") as failure:
+        managed._run(tmp_path, [sys.executable, "-c", "print('FAILED behavior contract'); raise SystemExit(1)"],
+                     failure_log=log)
+    assert str(log) in str(failure.value)
+    assert "FAILED behavior contract" in log.read_text()
+    assert log.stat().st_mode & 0o777 == 0o600
 
 
 def test_test_timeout_reaps_own_process(tmp_path):
@@ -393,3 +406,14 @@ def test_native_parent_leaves_managed_failed_paused_set_owed(checkout, tmp_path,
     assert events == ([] if required else ['resume'])
     assert request['windows_resume_settled']
     assert token['resume_needed']
+
+
+def test_timeout_keeps_partial_diagnostics(tmp_path):
+    log = tmp_path / "timeout.log"
+    with pytest.raises(RuntimeError, match="verification timed out"):
+        managed._run(tmp_path, [sys.executable, "-u", "-c",
+                     "import time; print('started behavior tests'); time.sleep(30)"],
+                     timeout=0.1, failure_log=log)
+    assert "started behavior tests" in log.read_text()
+    assert "exceeded its deadline" in log.read_text()
+    assert log.stat().st_mode & 0o777 == 0o600

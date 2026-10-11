@@ -452,6 +452,14 @@ def _complete_selected(request: dict) -> bool:
     managed_ok = True
     if managed is not None:
         managed_ok = update_managed.finish(root, managed, native_ok=bool(runtime_safe) and complete and not followups)
+        if managed.get("repaired"):
+            request["expected_sha"] = managed["sha"]
+            from hermes_cli.source_stamp import write_source_stamp
+
+            try:
+                write_source_stamp(root)
+            except OSError as exc:
+                record_followup("source_stamp", str(exc), retry="run `hermes update` again")
         if not update_managed.restart_allowed(managed):
             record_followup("gateway_restart", "maintained behavior admission failed; restart deferred",
                             retry="resolve the maintained gate before restarting the selected code")

@@ -871,7 +871,16 @@ def _reconcile_diverged_checkout(git_cmd, branch: str, pre_pull_sha, *, target_r
         # Best-effort safety tag as a recovery anchor.
         _git_run(git_cmd, ["tag", f"pre-update-{_time.strftime('%Y%m%d-%H%M%S')}"])
         if _git_run(git_cmd, ["merge", "--no-edit", merge_ref]).returncode != 0:
-            _git_run(git_cmd, ["merge", "--abort"])
+            from hermes_cli.update_merge_resolution import finish_recorded_resolution
+
+            if finish_recorded_resolution(git_cmd, merge_ref):
+                return
+            aborted = _git_run(git_cmd, ["merge", "--abort"])
+            if aborted.returncode == 0:
+                from hermes_cli.update_managed_repair import repair_merge
+
+                if repair_merge(_m().PROJECT_ROOT, merge_ref):
+                    return
             print("✗ Merge conflict between local commits and upstream — update stopped, nothing was changed.")
             print(f"  Resolve manually: cd {_m().PROJECT_ROOT} && git merge origin/{branch}")
             print("  Then re-run the update. Local work is untouched.")

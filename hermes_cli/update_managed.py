@@ -1,7 +1,7 @@
 """Opt-in maintained-branch verification and exact fork publication at completion.
 
 Git selection, dependencies, builds and restarts remain the native updater's work.
-This gate never adds files, commits, fetches, changes branches or forces a push.
+Publication never forces a push. Opt-in repair uses a separately verified isolated clone.
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from pathlib import Path
 import signal
 import subprocess
 import tempfile
+import time
 
 FORK_URL = "https://github.com/mattcreech/hermes-agent.git"
 TEST_FILES = (
@@ -22,22 +23,42 @@ TEST_FILES = (
     "tests/hermes_cli/test_source_check.py",
     "tests/hermes_cli/test_source_check_maintained.py",
     "tests/hermes_cli/test_update_managed.py",
+    "tests/hermes_cli/test_update_managed_repair.py",
+    "tests/hermes_cli/test_maintained_update_integration.py",
+    "tests/hermes_cli/test_update_maintained_profile_scope.py",
+    "tests/hermes_cli/test_update_merge_resolution.py",
+    "tests/hermes_cli/test_update_managed_diagnostics.py",
+    "tests/hermes_cli/test_maintained_backend_update.py",
 )
 
 
-def _run(root: Path, argv: list[str], *, env=None, timeout=60) -> str:
+def _run(root: Path, argv: list[str], *, env=None, timeout=60, failure_log: Path | None = None) -> str:
     # No raw Git errors in receipts: credential helpers can include private diagnostics.
     with tempfile.TemporaryFile() as output:
         proc = subprocess.Popen(argv, cwd=root, env=env, stdin=subprocess.DEVNULL,
                                 stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
         try:
             code = proc.wait(timeout=timeout)
-        except BaseException:
+        except BaseException as exc:
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(proc.pid, signal.SIGKILL)  # windows-footgun: ok — begin admits Linux only
             proc.wait(timeout=10)
+            if failure_log is not None and isinstance(exc, subprocess.TimeoutExpired):
+                output.seek(0)
+                failure_log.parent.mkdir(parents=True, exist_ok=True)
+                failure_log.write_bytes(output.read() + b"\nMaintained verification exceeded its deadline.\n")
+                failure_log.chmod(0o600)
+                raise RuntimeError(f"verification timed out; diagnostics: {failure_log}") from exc
             raise
         if code:
+            if failure_log is not None:
+                output.seek(0)
+                failure_log.parent.mkdir(parents=True, exist_ok=True)
+                failure_log.write_bytes(output.read())
+                failure_log.chmod(0o600)
+                detail = next((line.strip() for line in failure_log.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+                               if line.startswith("FAILED ")), f"command exited {code}")
+                raise RuntimeError(f"{detail[:300]}; diagnostics: {failure_log}")
             raise RuntimeError(f"command exited {code}")
         output.seek(0)
         return output.read().decode("utf-8", "replace").strip()
@@ -91,35 +112,35 @@ def begin(root: Path, *, expected_sha: str | None = None, required: bool = False
     return state
 
 
-def _tests(root: Path) -> None:
+def _tests(root: Path, *, interpreter: Path | None = None) -> None:
     from hermes_constants import get_hermes_home
     from pm.testenv import ensure_testenv
 
-    interpreter = ensure_testenv(root, extras=[])
+    interpreter = interpreter or ensure_testenv(root, extras=[])
     # Minimal locked runtime + dev/test groups cover the carried Telegram, prompt and
     # provider contracts. No optional audio/browser/ML extras are needed for this gate.
     scratch_root = get_hermes_home() / "cache" / "scratch"
     scratch_root.mkdir(parents=True, exist_ok=True)
+    diagnostics = get_hermes_home() / "logs" / "maintained-tests" / f"{time.time_ns()}-{os.getpid()}.log"
+    print(f"  → Verifying maintained behavior ({len(TEST_FILES)} isolated test files; one transient retry)…", flush=True)
     with tempfile.TemporaryDirectory(prefix="maintained-tests-", dir=scratch_root) as directory:
         scratch = Path(directory)
-        for index, test in enumerate(TEST_FILES):
+        for test in TEST_FILES:
             if not (root / test).is_file():
                 raise ValueError(f"canonical behavior test missing: {test}")
-            home = scratch / str(index)
-            home.mkdir()
-            (home / "tmp").mkdir()
-            env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(home),
-                   "HERMES_HOME": str(home / "hermes"), "TMPDIR": str(home / "tmp"),
-                   "TZ": "UTC", "LANG": "C.UTF-8",
-                   "LC_ALL": "C.UTF-8", "PYTHONHASHSEED": "0"}
-            # Fresh canonical per-file pytest, retaining conftest/Git guards. The shell
-            # runner overrides TMPDIR to /var/tmp; this bounded gate owns all its scratch.
-            command = [str(interpreter), "-m", "pytest", test,
-                       "--basetemp", str(home / "pytest"), "-q"]
-            try:
-                _run(root, command, env=env, timeout=180)
-            except (RuntimeError, subprocess.SubprocessError) as exc:
-                raise RuntimeError(f"{test}: {type(exc).__name__}") from exc
+        (scratch / "tmp").mkdir()
+        env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(scratch),
+               "HERMES_HOME": str(scratch / "hermes"), "TMPDIR": str(scratch / "tmp"),
+               "HERMES_PYTHON": str(interpreter), "TZ": "UTC", "LANG": "C.UTF-8",
+               "LC_ALL": "C.UTF-8", "PYTHONHASHSEED": "0"}
+        # The canonical runner isolates each file and retries a failed file once
+        # in a fresh process. Timeouts/signals are never retried.
+        command = ["/bin/bash", "scripts/run_tests.sh", *TEST_FILES, "-j", "2",
+                   "--file-timeout", "180", "--file-retries", "1", "--tb=short"]
+        try:
+            _run(root, command, env=env, timeout=1800, failure_log=diagnostics)
+        except subprocess.SubprocessError as exc:
+            raise RuntimeError(f"maintained behavior verification: {type(exc).__name__}") from exc
 
 
 def finish(root: Path, state: dict | None, *, native_ok: bool) -> bool:
@@ -137,7 +158,14 @@ def finish(root: Path, state: dict | None, *, native_ok: bool) -> bool:
         if not native_ok:
             raise ValueError("native dependencies/build/maintenance did not complete safely")
         stage = "tests"
-        _tests(root)
+        try:
+            _tests(root)
+        except RuntimeError as exc:
+            from hermes_cli.update_managed_repair import repair_tests
+
+            if not repair_tests(root, state, exc):
+                raise
+            sha = state["sha"]
         record_stage("managed_tests", "success", sha=sha)
         stage = "checkout"
         if _identity(root, settings) != sha:

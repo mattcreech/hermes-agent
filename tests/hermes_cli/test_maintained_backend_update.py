@@ -172,7 +172,7 @@ def test_real_unreachable_user_bus_refuses_scope(tmp_path):
     runtime_dir.mkdir(mode=0o700)
     env = dict(os.environ, INVOCATION_ID="fixture-service", XDG_RUNTIME_DIR=str(runtime_dir),
                DBUS_SESSION_BUS_ADDRESS=f"unix:path={runtime_dir}/missing-bus")
-    result = subprocess.run([sys.executable, str(probe)], env=env, capture_output=True, text=True, timeout=10)
+    result = subprocess.run([sys.executable, str(probe)], env=env, capture_output=True, text=True, timeout=10, check=False)
     assert result.returncode == 0, result.stderr
 
 
@@ -246,7 +246,7 @@ def test_real_scoped_child_survives_disposable_backend_service_exit(tmp_path):
         cmd.append(f"--setenv={name}={os.environ[name]}")
     cmd.extend([sys.executable, str(backend)])
     try:
-        result = subprocess.run(cmd, env=scopes.systemd_user_bus_env(), capture_output=True, text=True, timeout=15)
+        result = subprocess.run(cmd, env=scopes.systemd_user_bus_env(), capture_output=True, text=True, timeout=15, check=False)
         assert result.returncode == 0, result.stderr
         assert json.loads(launched.read_text())["systemd_unit"] == f"{unit}.service"
         # --wait has observed service completion; only then may the scoped child finish.

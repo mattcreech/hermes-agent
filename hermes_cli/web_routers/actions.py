@@ -470,6 +470,9 @@ def _latest_update_receipt_summary(action_id: Optional[str] = None) -> Optional[
         return {
             **{k: receipt.get(k) for k in ("outcome", "started_at", "finished_at", "action_id", "exit_code")},
             "managed_publication": receipt.get("managed_publication"),
+            "managed_repair": receipt.get("managed_repair"),
+            "details_path": "/api/hermes/update/details" + (
+                f"?action_id={receipt['action_id']}" if receipt.get("action_id") else ""),
             "pre_sha": (receipt.get("pre_update") or {}).get("sha"),
             "post_sha": post.get("sha"), "post_version": post.get("version"),
             "fleet_states": sorted({str(e.get("state")) for e in receipt.get("fleet") or [] if isinstance(e, dict)}),
@@ -497,3 +500,17 @@ async def get_update_receipt():
     if not receipt:
         raise HTTPException(status_code=404, detail="No update receipt found (no `hermes update` run recorded).")
     return {"receipt": receipt, "summary": _latest_update_receipt_summary()}
+
+
+@status_router.get("/api/hermes/update/details")
+async def get_update_details(action_id: Optional[str] = None):
+    """Authenticated, bounded diagnostic output for this exact update action."""
+    from fastapi.responses import PlainTextResponse
+    from hermes_cli.update_managed_diagnostics import diagnostic_details
+    from hermes_cli.update_receipt import read_receipt_for_action
+
+    receipt = read_receipt_for_action(action_id) if action_id else _read_latest_receipt()
+    if not receipt or (action_id and receipt.get("action_id") != action_id):
+        raise HTTPException(status_code=404, detail="No receipt for this update action.")
+    return PlainTextResponse(diagnostic_details(get_hermes_home(), receipt),
+                             headers={"Cache-Control": "no-store"})
