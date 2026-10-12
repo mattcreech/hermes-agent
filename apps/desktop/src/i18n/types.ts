@@ -3338,6 +3338,7 @@ export interface Translations extends NoticeTranslations {
       restarting: string
       notAvailable: string
       failed: string
+      completionUnknown?: string
       noReturn: string
       owed: (steps: string) => string
     }

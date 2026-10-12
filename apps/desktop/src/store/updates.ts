@@ -810,6 +810,7 @@ export async function applyUpdates(opts: DesktopUpdateApplyOptions = {}): Promis
 
 const BACKEND_ACTION_POLL_MS = 1500
 const BACKEND_ACTION_MAX_MS = 6 * 60 * 1000
+const BACKEND_ACTION_HARD_MAX_MS = 45 * 60 * 1000
 const BACKEND_RETURN_MAX_MS = 4 * 60 * 1000
 
 // C3: a committed update succeeds even when post-commit steps are still owed,
@@ -848,6 +849,24 @@ function failBackendApply(
   })
 
   return { ok: false, error: 'apply-failed', message: owed ? message : fallback.result }
+}
+
+function backendApplyAfterDeadline(
+  status: Awaited<ReturnType<typeof getActionStatus>> | null,
+  actionId: string | undefined
+): DesktopUpdateApplyResult {
+  if (status?.running || status?.exit_code == null) {
+    const message = translateNow('updates.applyStatus.completionUnknown')
+    $backendUpdateApply.set({ ...$backendUpdateApply.get(), applying: false, stage: 'manual', error: null, message, command: null })
+
+    return { ok: false, error: 'completion-unknown', manual: true, message }
+  }
+
+  return failBackendApply(
+    { shown: translateNow('updates.applyStatus.failed'), result: 'Backend update failed.' },
+    status,
+    actionId
+  )
 }
 
 function finishBackendApply(
@@ -1009,6 +1028,7 @@ async function runBackendUpdate(): Promise<DesktopUpdateApplyResult> {
     // Backups, dependency repair, and builds can legitimately take several
     // minutes. Keep the generous cap only as a guard against a stuck action.
     const actionDeadline = Date.now() + BACKEND_ACTION_MAX_MS
+    const hardDeadline = Date.now() + BACKEND_ACTION_HARD_MAX_MS
     let deadline = actionDeadline
     let reconnecting = false
 
@@ -1021,7 +1041,7 @@ async function runBackendUpdate(): Promise<DesktopUpdateApplyResult> {
       } catch {
         if (!reconnecting) {
           reconnecting = true
-          deadline = Date.now() + BACKEND_RETURN_MAX_MS
+          deadline = Math.min(hardDeadline, Date.now() + BACKEND_RETURN_MAX_MS)
           $backendUpdateApply.set({
             ...$backendUpdateApply.get(),
             applying: true,
@@ -1036,7 +1056,7 @@ async function runBackendUpdate(): Promise<DesktopUpdateApplyResult> {
       if (last.running) {
         if (reconnecting) {
           reconnecting = false
-          deadline = actionDeadline
+          deadline = Math.min(hardDeadline, Date.now() + BACKEND_ACTION_MAX_MS)
           $backendUpdateApply.set({
             ...$backendUpdateApply.get(),
             applying: true,
@@ -1044,6 +1064,10 @@ async function runBackendUpdate(): Promise<DesktopUpdateApplyResult> {
             message: translateNow('updates.applyStatus.pulling')
           })
         }
+
+        // A live backend owns the outcome. Long builds and draining active
+        // turns are progress, not evidence that the update failed.
+        deadline = Math.min(hardDeadline, Date.now() + BACKEND_ACTION_MAX_MS)
 
         continue
       }
@@ -1077,11 +1101,7 @@ async function runBackendUpdate(): Promise<DesktopUpdateApplyResult> {
       }
     }
 
-    return failBackendApply(
-      { shown: translateNow('updates.applyStatus.failed'), result: 'Backend update failed.' },
-      last,
-      started.action_id
-    )
+    return backendApplyAfterDeadline(last, started.action_id)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     $backendUpdateApply.set({
