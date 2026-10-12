@@ -30,6 +30,8 @@ TEST_FILES = (
     "tests/hermes_cli/test_update_merge_resolution.py",
     "tests/hermes_cli/test_update_managed_diagnostics.py",
     "tests/hermes_cli/test_maintained_backend_update.py",
+    "tests/pm/test_required_plugin_policy.py",
+    "tests/hermes_cli/test_update_capabilities.py",
 )
 
 
@@ -202,6 +204,11 @@ def finish(root: Path, state: dict | None, *, native_ok: bool) -> bool:
                 raise
             sha = state["sha"]
         record_stage("managed_tests", "success", sha=sha)
+        stage = "required_capabilities"
+        from hermes_cli.update_capabilities import verify_required_plugins
+
+        verify_required_plugins(root)
+        record_stage("required_capabilities", "success", sha=sha)
         stage = "checkout"
         if _identity(root, settings) != sha:
             raise ValueError("HEAD changed during maintained verification")
