@@ -92,6 +92,13 @@ class PluginEviction:
             previous = read_bytes_or_none(path)
             yaml = roundtrip_yaml()
             config = (yaml.load(previous.decode("utf-8-sig")) if previous else None) or {}
+            required = (config.get("updates") or {}).get("required_plugins", [])
+            if not isinstance(required, list) or any(not isinstance(name, str) for name in required):
+                raise InstallError("venv", f"updates.required_plugins must be a list of names in {path}")
+            protected = sorted(set(names).intersection(required))
+            if protected:
+                raise InstallError("venv", f"Required plugin(s) cannot be disabled: {', '.join(protected)} in {home}. "
+                                   "Resolve the dependency conflict before retrying the update.")
             # read_home_selection already proved plugins/memory are mappings and the lists are lists.
             plugins = config.get("plugins")
             if plugins is None:

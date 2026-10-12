@@ -81,12 +81,12 @@ def test_plugin_workspace_trusts_core_lock_instead_of_rechecking_release_age(lay
     assert {"base-dep", "chosen-dep"} <= set(core_packages) and "member-dep" not in core_packages
 
     root = tmp / "workspace"
-    ws.lock_and_sync([plug_a], [], root=root, source=core, seed_lock=core / "uv.lock",
+    ws.lock_and_sync([plug_a], ["chosen"], root=root, source=core, seed_lock=core / "uv.lock",
                      environment=managed_environment(tmp / "env"))
 
     policy = tomllib.loads((root / "pyproject.toml").read_text())["tool"]["uv"]
     assert "exclude-newer" not in policy and "exclude-newer-package" not in policy
-    assert sorted(policy["constraint-dependencies"]) == sorted(f"{n}=={v}" for n, v in core_packages.items())
+    assert sorted(policy["constraint-dependencies"]) == sorted(f"{n}=={core_packages[n]}" for n in ("base-dep", "chosen-dep"))
     locked = {p["name"] for p in tomllib.loads((root / "uv.lock").read_text())["package"]}
     assert "member-dep" in locked
 

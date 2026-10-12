@@ -109,7 +109,8 @@ def _copy_core_inputs(source: Path, destination: Path) -> None:
         shutil.copy2(entry, target)
 
 
-def _generate_pyproject(plugin_dirs: list[Path] | Mapping[Path, Path], root: Path, *, source: Path) -> None:
+def _generate_pyproject(plugin_dirs: list[Path] | Mapping[Path, Path], root: Path, *, source: Path,
+                        extras: list[str] | None = None) -> None:
     """Snapshot core and plugin build inputs into a fresh generation."""
     source = source.resolve()
     if root.resolve() == source or source.is_relative_to(root.resolve()):
@@ -129,7 +130,10 @@ def _generate_pyproject(plugin_dirs: list[Path] | Mapping[Path, Path], root: Pat
         import tomli_w
 
         document = tomllib.loads(core_text)
-        _trust_core_lock(document, source / "uv.lock")
+        from pm.workspace_selection import select_core_features
+
+        selected = select_core_features(document, source / "uv.lock", extras) if extras is not None else None
+        _trust_core_lock(document, source / "uv.lock", selected=selected)
         document.setdefault("tool", {}).setdefault("uv", {})["workspace"] = {"members": sorted(members)}
         text = tomli_w.dumps(document)
     else:
@@ -140,7 +144,7 @@ def _generate_pyproject(plugin_dirs: list[Path] | Mapping[Path, Path], root: Pat
     target.write_text(text, encoding="utf-8")
 
 
-def _trust_core_lock(document: dict, core_lock: Path) -> None:
+def _trust_core_lock(document: dict, core_lock: Path, *, selected: set[str] | None = None) -> None:
     """Hold core's packages at the versions core's lock already vetted.
 
     Release age is checked when Hermes locks (``exclude-newer`` in pyproject.toml, which
@@ -164,7 +168,8 @@ def _trust_core_lock(document: dict, core_lock: Path) -> None:
     for package in tomllib.loads(core_lock.read_text(encoding="utf-8-sig")).get("package", []):
         entries[package["name"]].append(package)
     pins = [f"{name}=={rows[0]['version']}" for name, rows in sorted(entries.items())
-            if len(rows) == 1 and "registry" in rows[0].get("source", {})]
+            if len(rows) == 1 and "registry" in rows[0].get("source", {})
+            and (selected is None or name in selected)]
     settings["constraint-dependencies"] = [*settings.get("constraint-dependencies", []), *pins]
 
 
@@ -367,7 +372,7 @@ def lock_and_sync(
     if root.exists() or root.is_symlink():
         raise InstallError("venv", f"workspace must be fresh: {root}")
     if replay is None:
-        _generate_pyproject(plugin_dirs, root, source=source)
+        _generate_pyproject(plugin_dirs, root, source=source, extras=extras)
         if seed_lock is not None:
             (root / "uv.lock").write_bytes(seed_lock.read_bytes())
     else:
