@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -145,6 +146,7 @@ def test_canonical_runner_environment_is_fresh_per_file(tmp_path, monkeypatch):
     root = tmp_path / "source"
     root.mkdir()
     profile = tmp_path / "profile"
+    monkeypatch.setattr("pm.uv_launcher", lambda name: tmp_path / "tools" / "uv")
     monkeypatch.setenv("HERMES_HOME", str(profile))
     for path in managed.TEST_FILES:
         file = root / path
@@ -155,6 +157,7 @@ def test_canonical_runner_environment_is_fresh_per_file(tmp_path, monkeypatch):
     def run(root, argv, *, env, timeout, failure_log):
         calls.append((argv, env, timeout))
         assert "INVOCATION_ID" not in env and "OPENAI_API_KEY" not in env
+        assert env["PATH"].split(os.pathsep)[0] == str(tmp_path / "tools")
         assert Path(env["HOME"]).is_dir()
         assert str(root) not in env["HOME"]
         assert env["HERMES_PYTHON"] == str(python)

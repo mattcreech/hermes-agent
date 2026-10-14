@@ -187,3 +187,34 @@ def test_git_recounts_inaccurate_inference_hunk_lengths(tmp_path):
     patch = PATCH.replace("@@ -1 +1 @@", "@@ -1,7 +1,7 @@")
     assert repair._validate_patch(root, patch, {name}, {name: "answer = 2\n"}) == [name]
     assert (root / name).read_text() == "answer = 3\n"
+
+
+def test_out_of_scope_merge_retains_diagnostics_without_inference(checkout, monkeypatch):
+    root, state = checkout
+    path = root / "client.ts"
+    path.write_text("export const value = 1\n")
+    git(root, "add", ".")
+    git(root, "commit", "-m", "common client")
+    base = git(root, "rev-parse", "HEAD")
+    git(root, "update-ref", "refs/remotes/origin/main", base)
+    path.write_text("export const value = 2\n")
+    git(root, "commit", "-am", "local client")
+    original = state["sha"] = git(root, "rev-parse", "HEAD")
+    git(root, "checkout", "--detach", base)
+    path.write_text("export const value = 3\n")
+    git(root, "commit", "-am", "upstream client")
+    target = git(root, "rev-parse", "HEAD")
+    git(root, "update-ref", "refs/remotes/origin/main", target)
+    git(root, "checkout", "custom/fixture")
+    def unexpected(*args):
+        pytest.fail("An out-of-scope conflict must not invoke inference")
+    monkeypatch.setattr(repair, "_propose", unexpected)
+    assert repair.repair_tests(root, state, RuntimeError("merge conflict"), merge_target=target) is None
+    fact = receipts._current.get().data["managed_repair"]
+    log = Path(fact["log"])
+    assert fact["status"] == "failed"
+    assert "client.ts" in fact["reason"]
+    assert log.is_file() and log.stat().st_mode & 0o777 == 0o600
+    assert "client.ts" in log.read_text()
+    assert git(root, "rev-parse", "HEAD") == original
+    assert git(root, "status", "--porcelain") == ""

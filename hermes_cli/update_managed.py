@@ -31,6 +31,9 @@ TEST_FILES = (
     "tests/hermes_cli/test_update_managed_diagnostics.py",
     "tests/hermes_cli/test_maintained_backend_update.py",
     "tests/pm/test_required_plugin_policy.py",
+    "tests/pm/test_workspace.py",
+    "tests/pm/test_workspace_optional_conflicts.py",
+    "tests/pm/test_workspace_build_inputs.py",
     "tests/hermes_cli/test_update_capabilities.py",
 )
 
@@ -166,7 +169,13 @@ def _tests(root: Path, *, interpreter: Path | None = None) -> None:
             if not (root / test).is_file():
                 raise ValueError(f"canonical behavior test missing: {test}")
         (scratch / "tmp").mkdir()
-        env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(scratch),
+        from pm import uv_launcher
+
+        uv = uv_launcher("uv")
+        if uv is None:
+            raise RuntimeError("PM-managed uv is required for dependency contract verification")
+        tool_path = str(uv.parent) + os.pathsep + "/usr/local/bin:/usr/bin:/bin"
+        env = {"PATH": tool_path, "HOME": str(scratch),
                "HERMES_HOME": str(scratch / "hermes"), "TMPDIR": str(scratch / "tmp"),
                "HERMES_PYTHON": str(interpreter), "TZ": "UTC", "LANG": "C.UTF-8",
                "LC_ALL": "C.UTF-8", "PYTHONHASHSEED": "0"}
