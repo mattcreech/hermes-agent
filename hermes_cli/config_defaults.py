@@ -2377,8 +2377,8 @@ DEFAULT_CONFIG = {
         # Refresh an installed cua-driver during `hermes update` (best-effort, macOS only). Turn off
         # e.g. on non-admin accounts where /Applications isn't writable.
         "refresh_cua_driver": True,
-        # Explicit maintained branch gate at update completion; disabled on ordinary installs.
-        "maintained_publication": {"enabled": False, "branch": "", "url": "", "auto_repair": False},
+        "maintained_publication": {"enabled": False, "branch": "", "url": "", "auto_repair": False},  # Optional completion gate.
+        "prepared_channels": {},  # Physical install ids; owning-home binding lives in Git metadata.
     },
     # LSP diagnostics (pyright, gopls, rust-analyzer...) in the post-write lint check of
     # write_file/patch. Runs only when the cwd or edited file is inside a git worktree; otherwise

@@ -35,6 +35,7 @@ TEST_FILES = (
     "tests/pm/test_workspace_optional_conflicts.py",
     "tests/pm/test_workspace_build_inputs.py",
     "tests/hermes_cli/test_update_capabilities.py",
+    "tests/hermes_cli/test_update_prepared.py",
 )
 
 
@@ -134,6 +135,10 @@ def begin(root: Path, *, expected_sha: str | None = None, required: bool = False
 
     state = {"settings": settings, "sha": None, "error": None}
     try:
+        from hermes_cli.update_prepared import policy
+        if policy(root) is not None:
+            settings = {**settings, "auto_repair": False}
+            state["settings"] = settings
         if settings.get("enabled") is not True:
             raise ValueError("required maintained publication was disabled during the update")
         if os_family() != "linux":

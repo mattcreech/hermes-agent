@@ -640,6 +640,9 @@ def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False, ch
     Installs that can't honor non-default branches (e.g. Docker) surface a
     one-line notice instead of silently dropping the flag.
     """
+    from hermes_cli.update_prepared import cli_check
+    if cli_check(_m().PROJECT_ROOT, branch, branch_explicit=branch_explicit, channel=channel):
+        return
     # Shared admission gate (#91277 Phase 3): same marker-first decision as
     # the apply path, so --check can never report git state for an install
     # whose real update mechanism is an image pull.
@@ -1065,7 +1068,7 @@ def _resolved_commit(git_cmd, ref: str) -> str:
     return (_git_run(git_cmd, ["rev-parse", "-q", "--verify", f"{ref}^{{commit}}"]).stdout or "").strip()
 
 
-def _move_checkout_to(git_cmd, branch, merge_ref, target_sha, pre_pull_sha) -> None:
+def _move_checkout_to(git_cmd, branch, merge_ref, target_sha, pre_pull_sha, *, strict_ff=False) -> None:
     """The principal pull's one checkout move onto *target_sha*; exits when it cannot be made."""
     # merge --ff-only the already-fetched commit instead of `git pull`, which would do a
     # SECOND network fetch. Every move names ``target_sha``, never the ref: a ref that moves
@@ -1079,6 +1082,10 @@ def _move_checkout_to(git_cmd, branch, merge_ref, target_sha, pre_pull_sha) -> N
     merge_result = _git_run(git_cmd, ["merge", "--ff-only", target_sha])
     if merge_result.returncode == 0:
         return
+    if strict_ff:
+        print("✗ Prepared source could not fast-forward; the working version was kept.")
+        _record_stop("prepared_source_required")
+        sys.exit(1)
     ancestry = _git_run(git_cmd, ["merge-base", "--is-ancestor", "HEAD", target_sha])
     if ancestry.returncode == 1:
         _reconcile_diverged_checkout(git_cmd, branch, pre_pull_sha, target_ref=target_sha)
@@ -1105,7 +1112,7 @@ def _move_checkout_to(git_cmd, branch, merge_ref, target_sha, pre_pull_sha) -> N
 def _pull_updates(
     git_cmd, branch, auto_stash_ref, *, prompt_for_restore, gw_input_fn, discard_local_changes,
     keep_stash, target_ref=None, pre_sync_sha=None, rollback_branch=None, sync_upstream=False, assume_yes=False,
-    in_place_update=False, _windows_gateway_resume=None, expected_sha=None):
+    in_place_update=False, _windows_gateway_resume=None, expected_sha=None, prepared=False):
     """Fast-forward onto ``origin/<branch>`` and settle the autostash. Divergence by shape:
     custom branch -> merge, same branch -> rescue ref then reset; a
     post-pull syntax error in a critical file rolls back. Exits on failure; returns the SHA HEAD had to move off."""
@@ -1146,7 +1153,13 @@ def _pull_updates(
         try:
             # The paused gateways' tree gate must know this move's target before git writes a file.
             with _checkout_move(_windows_gateway_resume, target_sha):
-                _move_checkout_to(git_cmd, branch, merge_ref, target_sha, pre_pull_sha)
+                if prepared:
+                    _move_checkout_to(git_cmd, branch, merge_ref, target_sha, pre_pull_sha, strict_ff=True)
+                else:
+                    _move_checkout_to(git_cmd, branch, merge_ref, target_sha, pre_pull_sha)
+            if prepared and _capture_head_sha(git_cmd, _m().PROJECT_ROOT) != target_sha:
+                _record_stop("head_moved")
+                sys.exit(1)
             _refuse_unselected_head(git_cmd, target_sha, pre_pull_sha)  # before the marker goes
         except KeyboardInterrupt:
             raise  # Ctrl-C reached git too (same process group): the tree may be torn, keep the marker
@@ -1392,14 +1405,16 @@ def _apply_parked_branch_guard(
 
 def _prepare_checkout_for_update(
     git_cmd, branch, current_branch, *, is_fork, assume_yes, gateway_mode, gw_input_fn,
-    switch_branch, target_ref=None, _windows_gateway_resume):
+    switch_branch, target_ref=None, _windows_gateway_resume, prepared=False):
     """Parked-branch guard, land on the target, stash, count new commits. Exits when the
     checkout is unsafe to move or the target is missing. ``commit_count`` is 0 when up to
     date, -1 when tips differ but the shallow count is unrecoverable."""
     if target_ref is None:
         target_ref = f"origin/{branch}"
     release_tag = target_ref != f"origin/{branch}"
-    if release_tag:
+    if prepared:
+        parked_branch_switched, in_place_update, switch_block_reason = False, True, None
+    elif release_tag:
         # A release lands detached at its exact commit, never merges into or
         # rewrites the user's branch. Branch-policy machinery is main-only.
         parked_branch_switched, in_place_update, switch_block_reason = False, True, None
@@ -1812,6 +1827,8 @@ def _cmd_update_impl(args, gateway_mode: bool):
     # declare this local, so only they hand off through retired shims.
     _hermes_current_updater_frame = True
     _commit.begin_update_attempt()  # nothing an earlier update in this process armed is ours (O5)
+    from hermes_cli.update_prepared import prepare_args
+    prepare_args(_m().PROJECT_ROOT, args)
     git_operation = git_operation_in_progress(_m().PROJECT_ROOT)
     if git_operation:
         root = _m().PROJECT_ROOT
@@ -1930,12 +1947,15 @@ def _cmd_update_impl(args, gateway_mode: bool):
             sys.exit(1)
 
         current_branch = _current_branch_name(git_cmd, check=True)
+        from hermes_cli.update_prepared import admit_request
+        admit_request(_m().PROJECT_ROOT, completion_request)
         _commit.record_run_start(git_cmd, _m().PROJECT_ROOT)
         _refuse_before_commit_point(git_cmd, target_ref, _windows_gateway_resume)
         _plan = _prepare_checkout_for_update(
             git_cmd, branch, current_branch, is_fork=is_fork, assume_yes=assume_yes,
             gateway_mode=gateway_mode, gw_input_fn=gw_input_fn, switch_branch=opts.switch_branch,
-            target_ref=target_ref, _windows_gateway_resume=_windows_gateway_resume)
+            target_ref=target_ref, _windows_gateway_resume=_windows_gateway_resume,
+            prepared=bool(completion_request.get("prepared_sha")))
         commit_count = _plan.commit_count
 
         if commit_count == 0:
@@ -1962,7 +1982,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
             rollback_branch=_plan.rollback_branch,
             sync_upstream=is_fork and branch == "main" and not release_sha, assume_yes=assume_yes,
             in_place_update=_plan.in_place_update, _windows_gateway_resume=_windows_gateway_resume,
-            expected_sha=completion_request.get("expected_sha"))
+            expected_sha=completion_request.get("expected_sha"), prepared=bool(completion_request.get("prepared_sha")))
         _apply_pulled_update(
             git_cmd, branch, movement_baseline, _plan,
             _windows_gateway_resume=_windows_gateway_resume, completion_request=completion_request)

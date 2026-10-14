@@ -410,6 +410,14 @@ def check_for_updates(*, install_root: Path | None = None, home: Path | None = N
     config = require_readable_config_before_write(home / "config.yaml")
     if passive and (config.get("updates") or {}).get("check") is False:
         return {**result, "reason": "disabled"}
+    from hermes_cli.update_prepared import check_status, policy
+    try:
+        prepared = policy(root)
+        if prepared is not None:
+            return check_status(root, home, prepared, git=git, force=force)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        return {**result, "supported": True, "prepared": True, "error": "preparation-required",
+                "updateAvailable": False, "message": f"Preparation required: {exc}"}
     channel = resolve_update_channel(config, root) if channel is None else validate_name(channel)
     forward_only = rides_default_channel(channel_record(config, root), channel, root)
     co = _read_checkout(root, git, embedded)

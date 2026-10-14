@@ -168,7 +168,8 @@ def _is_member_candidate(plugin_dir: Path) -> bool:
 
 def enabled_plugin_entries(*, proposed_home=None, enabled=None, disabled=None,
                            installing: Path | None = None,
-                           skip_invalid_secondary: bool = False) -> list[tuple[Path, str, Path]]:
+                           skip_invalid_secondary: bool = False,
+                           source_root: Path | None = None) -> list[tuple[Path, str, Path]]:
     """``(home plugins dir, selection key, plugin dir)`` for every selected plugin, in config order.
 
     The key is what the home's config names, so a caller can edit that home's selection.
@@ -188,17 +189,19 @@ def enabled_plugin_entries(*, proposed_home=None, enabled=None, disabled=None,
             plugin_dir = plugins_dir / relative
             proposed = installing is not None and plugin_dir.resolve() == installing.resolve()
             if not proposed and not _is_directory(plugin_dir):
-                plugin_dir = paths.repo_root() / "plugins" / relative
+                plugin_dir = (source_root or paths.repo_root()) / "plugins" / relative
             if proposed or _is_directory(plugin_dir):
                 entries.append((plugins_dir, name, plugin_dir))
     return entries
 
 
 def enabled_plugin_dirs(*, proposed_home=None, enabled=None, disabled=None,
-                        installing: Path | None = None, skip_invalid_secondary: bool = False) -> list[Path]:
+                        installing: Path | None = None, skip_invalid_secondary: bool = False,
+                        source_root: Path | None = None) -> list[Path]:
     """Resolve the effective plugin selection without filtering dependency declarations."""
     entries = enabled_plugin_entries(proposed_home=proposed_home, enabled=enabled, disabled=disabled,
-                                     installing=installing, skip_invalid_secondary=skip_invalid_secondary)
+                                     installing=installing, skip_invalid_secondary=skip_invalid_secondary,
+                                     source_root=source_root)
     return list(dict.fromkeys(plugin_dir for _plugins_dir, _name, plugin_dir in entries))
 
 
