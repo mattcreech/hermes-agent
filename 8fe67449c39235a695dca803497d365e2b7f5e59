@@ -1,0 +1,29 @@
+{
+  "adapter_digests": {
+    "hermes_prepare_update.py": "499cf2353dc1e51928d9ef682fc6d3d78f78d1656d33ef87b1e98ba88d45127f",
+    "hermes_prepared_macos.py": "878eae5aadda6ddebd4cac3a143cdf1c858e978e86c1f6d3b3f92bcc1e6c6d9d",
+    "hermes_prepared_validate.py": "82106e700139c7184e7fa66b042ec0cb846fbe515e4941f59e115b5bdb4716b5"
+  },
+  "candidate_sha": "8fe67449c39235a695dca803497d365e2b7f5e59",
+  "contracts_digest": "519bd6cbb4373c6ae9ed38ec7792b436a7709d23bcf9fe841767496716f3cefb",
+  "custom_sha": "2c1a3a9a6a0330db28938c5edd3a4d36ca76b442",
+  "input_digest": "8103a60cbc952f68d422989b2036b68d7aa768cf2626bf62fb55013ef5015d69",
+  "input_digests": {
+    "43c1808fdc86946b": "8103a60cbc952f68d422989b2036b68d7aa768cf2626bf62fb55013ef5015d69",
+    "f704f40eac6eabb0": "74e2d8e423128a23431d77231a4468cda71429d0ba8a810fa6be34997b453241"
+  },
+  "owner_install_id": "43c1808fdc86946b",
+  "previous_ready_sha": null,
+  "schema_version": 1,
+  "upstream_sha": "0e427d788d253630d38a3a51cd76849e73cd6925",
+  "validated_at": "2026-10-14T15:15:44.364435+00:00",
+  "validation": {
+    "dependency_environment": "pass",
+    "desktop_tests": "pass",
+    "desktop_types": "pass",
+    "macos_build": "pass",
+    "python_contracts": "pass",
+    "repository_checks": "pass",
+    "required_capabilities": "pass"
+  }
+}
