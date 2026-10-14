@@ -10,7 +10,7 @@ import subprocess
 import pytest
 
 from hermes_cli import update_prepared as prepared
-from hermes_cli.update_prepared_notes import PreparationRequired, VALIDATION_STAGES, remote_note
+from hermes_cli.update_prepared_notes import PreparationRequired, VALIDATION_STAGES, remote_note, validate_gates
 
 
 def git(root, *args):
@@ -97,6 +97,24 @@ def test_admitted_feed_fast_forwards_exact_commit_without_branch_switch(feed, mo
     assert git(feed.root, "rev-parse", "HEAD") == target == request["expected_sha"]
     assert git(feed.root, "branch", "--show-current") == before == "custom/fixture"
     assert git(feed.root, "status", "--porcelain") == ""
+
+
+@pytest.mark.platforms("linux")
+def test_linux_backend_note_admits_without_macos_build(feed):
+    feed.note["validation"]["macos_build"] = "not_requested"
+    publish(feed)
+    request = {}
+    assert prepared.admit_target(feed.root, request, prepared.policy(feed.root)) == feed.target
+    assert request["prepared_validation"]["validation"]["macos_build"] == "not_requested"
+
+
+def test_gate_validation_requires_a_passed_macos_build_for_darwin():
+    validation = dict.fromkeys(VALIDATION_STAGES, "pass")
+    validate_gates(validation, "darwin")
+    validation["macos_build"] = "not_requested"
+    validate_gates(validation, "linux")
+    with pytest.raises(PreparationRequired, match="every required validation gate"):
+        validate_gates(validation, "darwin")
 
 
 @pytest.mark.parametrize("fault", ["missing", "malformed", "wrong-sha", "failed-gate", "bad-ancestor"])

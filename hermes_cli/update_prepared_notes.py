@@ -16,8 +16,25 @@ class PreparationRequired(ValueError):
     """The prepared feed has no admissible verified candidate."""
 
 
+def required_gates(platform: str) -> tuple[str, ...]:
+    """Linux backend validation does not depend on a separate Darwin build host."""
+    return tuple(stage for stage in VALIDATION_STAGES if platform != "linux" or stage != "macos_build")
+
+
+def validate_gates(validation: object, platform: str) -> None:
+    """Require host gates and preserve an explicitly unrequested Linux macOS build."""
+    if (not isinstance(validation, dict)
+            or any(validation.get(stage) != "pass" for stage in required_gates(platform))
+            or any(value != "pass" and not (platform == "linux" and stage == "macos_build"
+                                           and value == "not_requested")
+                   for stage, value in validation.items())):
+        raise PreparationRequired("Prepared candidate has not passed every required validation gate")
+
+
 def validate_note(text: str, candidate_sha: str) -> dict:
     """An attestation admits only its exact commit, with every required gate passed."""
+    from hermes_platform.host.facts import os_family
+
     try:
         note = json.loads(text)
     except (TypeError, ValueError) as exc:
@@ -44,11 +61,7 @@ def validate_note(text: str, candidate_sha: str) -> dict:
         raise PreparationRequired("Prepared validation note does not bind its runtime proof to an installation")
     if note["candidate_sha"] != candidate_sha:
         raise PreparationRequired("Prepared validation note names a different source commit")
-    validation = note.get("validation")
-    if (not isinstance(validation, dict)
-            or any(validation.get(stage) != "pass" for stage in VALIDATION_STAGES)
-            or any(value != "pass" for value in validation.values())):
-        raise PreparationRequired("Prepared candidate has not passed every required validation gate")
+    validate_gates(note.get("validation"), os_family())
     if not isinstance(note.get("validated_at"), str) or not note["validated_at"]:
         raise PreparationRequired("Prepared validation note has no validation time")
     return note
