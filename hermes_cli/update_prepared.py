@@ -153,7 +153,8 @@ def cli_check(root: Path, branch: str, *, branch_explicit: bool, channel: str | 
         print(status["message"])
         raise SystemExit(1)
     print(f"→ Prepared update feed: origin/{settings['branch']}")
-    print("✓ Already up to date." if status["behind"] == 0 else "⚕ A verified prepared update is available.")
+    print(status["message"] if status.get("upstreamPending") else
+          "✓ Already up to date." if status["behind"] == 0 else "⚕ A verified prepared update is available.")
     return True
 
 
@@ -171,6 +172,8 @@ def admit_target(root: Path, request: dict, settings: dict) -> str:
     for key in ("upstream_sha", "custom_sha", "previous_ready_sha"):
         if note.get(key):
             _git(root, "merge-base", "--is-ancestor", note[key], target)
+    if request.get("requested_upstream_sha"):
+        _git(root, "merge-base", "--is-ancestor", request["requested_upstream_sha"], target)
     request.update(expected_sha=target, prepared_sha=target, prepared_validation=note)
     return target
 
@@ -221,7 +224,7 @@ def check_status(root: Path, home: Path, settings: dict, *, git: str = "git", fo
               "prepared": True, "behind": None, "commits": [], "updateAvailable": False}
     try:
         current_digest = runtime_input_digest(root, Path(settings["owner_home"]))
-        identity = {"root": str(root), "head": co.head, "origin": co.origin,
+        identity = {"root": str(root), "head": co.head, "origin": co.origin, "requestProtocol": 1,
                     "settings": settings, "inputDigest": current_digest}
         cache = Path(settings["owner_home"]) / "source-checks" / f"{install_id(root)}.prepared.json"
         now = time.time()
@@ -244,7 +247,16 @@ def check_status(root: Path, home: Path, settings: dict, *, git: str = "git", fo
         behind, commits = source._behind_count(co, target)
         result.update(targetSha=target, behind=behind, commits=commits, updateAvailable=behind != 0,
                       fetchedAt=int(now * 1000), preparedValidation=note)
+        from hermes_cli.update_prepared_request import pending_status
+        pending_status(root, settings, result, git)
         source._write_cache(cache, identity, now, result)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        result.update(error="preparation-required", message=f"Preparation required: {exc}")
+        from hermes_cli.update_prepared_request import offer_preparation
+        try:
+            if offer_preparation(root, settings, result, co, str(exc), git):
+                return result
+        except (OSError, ValueError, subprocess.SubprocessError) as source_error:
+            exc = source_error
+        result.update(error="preparation-required", behind=None, updateAvailable=False,
+                      message=f"Preparation required: {exc}")
     return result

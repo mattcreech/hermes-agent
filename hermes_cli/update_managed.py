@@ -36,6 +36,7 @@ TEST_FILES = (
     "tests/pm/test_workspace_build_inputs.py",
     "tests/hermes_cli/test_update_capabilities.py",
     "tests/hermes_cli/test_update_prepared.py",
+    "tests/hermes_cli/test_update_prepared_request.py",
 )
 
 

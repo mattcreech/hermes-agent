@@ -334,6 +334,10 @@ async def check_hermes_update(force: bool = False, profile: Optional[str] = None
         behind = None
 
     payload["behind"] = behind
+    if behind is not None and status.get("upstreamPending"):
+        payload.update(upstream_pending=True, update_available=True, branch=status.get("branch"),
+                       message=status.get("message"))
+        return payload
     if behind is None:
         payload["message"] = "Couldn't reach the update source — try again later."
     elif behind == 0:

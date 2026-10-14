@@ -1857,6 +1857,9 @@ def _cmd_update_impl(args, gateway_mode: bool):
 
     _pre_update_plan = _begin_update_receipt_and_plan(args)
 
+    from hermes_cli.update_prepared_request import prepare_and_refresh_plan
+    _pre_update_plan, requested_upstream_sha = prepare_and_refresh_plan(_m().PROJECT_ROOT, _pre_update_plan)
+
     # Backup before any git/file mutation; the snapshot id (None if disabled/failed) feeds
     # the post-update cron-jobs safety net. A deliberate opt-out is recorded as a skip with its
     # reason, not as a failed step (see _record_pre_update_backup_outcome).
@@ -1881,6 +1884,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
     completion_request = _source_completion_request(
         opts, _pre_update_plan, pre_update_snapshot_id, _windows_gateway_resume,
         had_desktop_app_before_update, gateway_mode)
+    completion_request["requested_upstream_sha"] = requested_upstream_sha
     branch = _m()._resolve_update_branch(args)
     completion_request["branch"] = branch
     target_ref, release_sha, target_is_head, target_repository = _check.select_apply_target(
