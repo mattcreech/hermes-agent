@@ -313,3 +313,31 @@ def test_consumption_cannot_invoke_inline_inference_repair(feed):
     assert state["error"] is None
     assert state["settings"]["auto_repair"] is False
     assert json.loads(path.read_text())["updates"]["maintained_publication"]["auto_repair"] is True
+
+
+def test_bundled_overlay_digest_does_not_pin_old_tracked_source(feed):
+    from hermes_cli.update_prepared_inputs import plugin_digest, runtime_inputs
+
+    directory = feed.root / "plugins" / "mixed"
+    directory.mkdir(parents=True)
+    tracked, overlay = directory / "__init__.py", directory / "custom.py"
+    tracked.write_text("upstream_version = 1\n")
+    overlay.write_text("customization = 1\n")
+    (feed.root / ".git" / "info" / "exclude").write_text("plugins/mixed/custom.py\n")
+    git(feed.root, "add", "plugins/mixed/__init__.py")
+    git(feed.root, "commit", "-qm", "bundled source")
+    path = feed.home / "config.yaml"
+    config = json.loads(path.read_text())
+    config["plugins"] = {"enabled": ["mixed"]}
+    path.write_text(json.dumps(config))
+    first = runtime_inputs(feed.root, feed.home)
+    row = first["plugins"][0]
+    assert row["scope"] == "untracked-bundled"
+    assert row["overlay_paths"] == ["custom.py"]
+    assert row["digest"] == plugin_digest(directory, ["custom.py"])
+    tracked.write_text("upstream_version = 2\n")
+    git(feed.root, "add", "plugins/mixed/__init__.py")
+    git(feed.root, "commit", "-qm", "new verified bundled source")
+    assert runtime_inputs(feed.root, feed.home) == first
+    overlay.write_text("customization = 2\n")
+    assert runtime_inputs(feed.root, feed.home) != first

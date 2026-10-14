@@ -41,9 +41,12 @@ def plugin_file_paths(directory: Path) -> list[Path]:
     return sorted(files, key=lambda path: path.relative_to(directory).as_posix())
 
 
-def plugin_digest(directory: Path) -> str:
+def plugin_digest(directory: Path, relative_paths: list[str] | None = None) -> str:
     digest = hashlib.sha256()
-    for path in plugin_file_paths(directory):
+    paths = plugin_file_paths(directory) if relative_paths is None else [directory / name for name in sorted(set(relative_paths))]
+    for path in paths:
+        if path.is_symlink() or not path.resolve().is_relative_to(directory.resolve()) or not path.is_file():
+            raise ValueError("Plugin code digest requires regular files inside the declared plugin")
         digest.update(path.relative_to(directory).as_posix().encode("utf-8") + b"\0")
         digest.update(path.read_bytes() + b"\0")
     return digest.hexdigest()
@@ -80,17 +83,22 @@ def _plugin_input(directory: Path, root: Path, entries: list[tuple]) -> dict:
 
     directory = directory.resolve()
     scope = "external"
+    overlay_paths = None
     if directory.is_relative_to(root / "plugins"):
         relative = directory.relative_to(root)
-        tracked = set(_git(root, "ls-files", "--", relative.as_posix()).splitlines())
+        tracked = set(_git(root, "ls-files", "-z", "--", relative.as_posix()).split("\0"))
         paths = plugin_file_paths(directory)
-        scope = "tracked-bundled" if paths and all(path.relative_to(root).as_posix() in tracked for path in paths) else "untracked-bundled"
+        overlay_paths = [path.relative_to(directory).as_posix() for path in paths
+                         if path.relative_to(root).as_posix() not in tracked]
+        scope = "tracked-bundled" if paths and not overlay_paths else "untracked-bundled"
     row = {"identity": str(directory), "scope": scope, "selection_keys": [
         {"home": str(plugins.parent.resolve()), "key": key}
         for plugins, key, path in entries if path.resolve() == directory]}
     # The exact candidate commit binds tracked source; only external overlays are inputs.
     if scope != "tracked-bundled":
-        row["digest"] = plugin_digest(directory)
+        if overlay_paths is not None:
+            row["overlay_paths"] = overlay_paths
+        row["digest"] = plugin_digest(directory, overlay_paths)
     return row
 
 
