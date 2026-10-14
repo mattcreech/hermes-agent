@@ -1455,10 +1455,33 @@ describe('applyBackendUpdate recovery', () => {
     })
 
     const promise = applyBackendUpdate()
-    await vi.advanceTimersByTimeAsync(45 * 60 * 1000 + 1500)
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 1500)
     await expect(promise).resolves.toMatchObject({ ok: false, error: 'completion-unknown' })
     expect($backendUpdateApply.get().stage).toBe('manual')
     expect($backendUpdateApply.get().error).toBeNull()
+  })
+
+  it('observes preparation and the native install tail beyond forty-five minutes without posting again', async () => {
+    const actionId = 'f'.repeat(32)
+    const startedAt = Date.now()
+    updateHermesSpy.mockResolvedValue({ action_id: actionId, ok: true, name: 'hermes-update', pid: 1 })
+    getActionStatusSpy.mockImplementation(async () => {
+      const running = Date.now() - startedAt < 55 * 60 * 1000
+
+      return {
+        exit_code: running ? null : 0,
+        lines: [running ? 'Preparing and verifying updates…' : 'Update complete!'],
+        name: 'hermes-update',
+        pid: running ? 1 : null,
+        running
+      }
+    })
+
+    const promise = applyBackendUpdate()
+    await vi.advanceTimersByTimeAsync(55 * 60 * 1000 + 1500)
+
+    await expect(promise).resolves.toMatchObject({ ok: true })
+    expect(updateHermesSpy).toHaveBeenCalledTimes(1)
   })
 
   it('fails immediately when the update action exits nonzero', async () => {

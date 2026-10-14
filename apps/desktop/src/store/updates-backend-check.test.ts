@@ -47,6 +47,27 @@ describe('mapBackendCheck', () => {
     expect(status.targetSha).toBe('backend:9.9.9')
   })
 
+  it.each([0, null])('offers pending upstream preparation when the ready feed is current (%s)', behind => {
+    const message = 'New upstream changes will be prepared and verified during Update.'
+
+    const status = mapBackendCheck(
+      response({
+        behind,
+        branch: 'prepared/matt',
+        upstream_pending: true,
+        update_available: true,
+        message
+      })
+    )
+
+    expect(status.error).toBeUndefined()
+    expect(status.updateAvailable).toBe(true)
+    expect(status.upstreamPending).toBe(true)
+    expect(status.behind).toBeNull()
+    expect(status.branch).toBe('prepared/matt')
+    expect(status.message).toBe(message)
+  })
+
   it('maps the "behind but uncountable" sentinel to behind: null, not 0', () => {
     // The producer answers behind: -1 (source_check.UPDATE_AVAILABLE_NO_COUNT)
     // when the checkout is behind but the count can't be computed (shallow

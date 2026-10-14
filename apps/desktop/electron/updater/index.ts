@@ -48,6 +48,8 @@ export function resolveUpdaterMechanism(facts: MechanismFacts): UpdaterMechanism
 /** The status shape main.ts already sends over `hermes:updates:check`. */
 export interface UpdaterStatusWire {
   supported: boolean
+  /** The normal updater prepares newer upstream code before installation. */
+  upstreamPending?: boolean
   mechanism?: UpdaterMechanism
   updateAvailable?: boolean
   branch?: string
