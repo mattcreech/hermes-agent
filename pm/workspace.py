@@ -131,9 +131,9 @@ def _generate_pyproject(plugin_dirs: list[Path] | Mapping[Path, Path], root: Pat
 
         document = tomllib.loads(core_text)
         if extras is not None:
-            from pm.workspace_selection import select_core_features
+            from pm.workspace_selection import trim_unrequested_core_extras
 
-            select_core_features(document, source / "uv.lock", extras)
+            trim_unrequested_core_extras(document, extras)
         uv_policy = document.setdefault("tool", {}).setdefault("uv", {})
         # Release age is checked when Hermes locks; users trust that lock (#135589).
         uv_policy.pop("exclude-newer", None)

@@ -188,7 +188,7 @@ def repair_tests(root: Path, state: dict, failure: RuntimeError, *, merge_target
                 except RuntimeError:
                     conflicts = _git(candidate, "diff", "--name-only", "--diff-filter=U").splitlines()
                     if not conflicts or not set(conflicts) <= permitted or any(name.startswith("tests/") for name in conflicts):
-                        raise ValueError("merge conflicts exceed the carried implementation scope")
+                        raise ValueError("merge conflicts require review outside automatic repair scope: " + ", ".join(conflicts))
                     detail = "Resolve these conflict markers, preserving BOTH upstream and custom behavior: " + json.dumps(conflicts)
             originals = {name: (candidate / name).read_text(encoding="utf-8-sig") for name in allowed if (candidate / name).is_file()}
             print("  → Trying one isolated automatic compatibility repair (up to 5 minutes)…", flush=True)
@@ -235,6 +235,9 @@ def repair_tests(root: Path, state: dict, failure: RuntimeError, *, merge_target
             print("  ✓ Automatic compatibility repair passed the maintained behavior tests.")
             return repaired
     except (OSError, ValueError, SyntaxError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError) as exc:
+        if not log.exists():
+            log.write_text("Automatic repair stopped before inference.\n" + str(exc) + "\n", encoding="utf-8")
+            log.chmod(0o600)
         record_fact("managed_repair", {"status": "failed", "sha": original, "reason": str(exc), "log": str(log)})
         record_stage("managed_repair", "failed", sha=original)
         print(f"  ⚠ Automatic repair could not complete: {exc}")

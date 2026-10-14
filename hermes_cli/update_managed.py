@@ -31,6 +31,9 @@ TEST_FILES = (
     "tests/hermes_cli/test_update_managed_diagnostics.py",
     "tests/hermes_cli/test_maintained_backend_update.py",
     "tests/pm/test_required_plugin_policy.py",
+    "tests/pm/test_workspace.py",
+    "tests/pm/test_workspace_optional_conflicts.py",
+    "tests/pm/test_workspace_build_inputs.py",
     "tests/hermes_cli/test_update_capabilities.py",
 )
 
@@ -166,7 +169,10 @@ def _tests(root: Path, *, interpreter: Path | None = None) -> None:
             if not (root / test).is_file():
                 raise ValueError(f"canonical behavior test missing: {test}")
         (scratch / "tmp").mkdir()
-        env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(scratch),
+        from pm import env_for
+
+        tool_path = env_for("uv", base_env={"PATH": "/usr/local/bin:/usr/bin:/bin"})["PATH"]
+        env = {"PATH": tool_path, "HOME": str(scratch),
                "HERMES_HOME": str(scratch / "hermes"), "TMPDIR": str(scratch / "tmp"),
                "HERMES_PYTHON": str(interpreter), "TZ": "UTC", "LANG": "C.UTF-8",
                "LC_ALL": "C.UTF-8", "PYTHONHASHSEED": "0"}
