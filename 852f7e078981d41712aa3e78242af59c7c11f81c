@@ -1,0 +1,26 @@
+{
+  "adapter_digests": {
+    "hermes_prepare_update.py": "72b1702172dbc6d93c34b9b1f7557f11086a86178d87ecd10d1a13e733755294",
+    "hermes_prepared_macos.py": "7f6ac780c368d6f00c5089f97831db261a9ab8e5f1c118576be01013c015ab96",
+    "hermes_prepared_validate.py": "82106e700139c7184e7fa66b042ec0cb846fbe515e4941f59e115b5bdb4716b5"
+  },
+  "candidate_sha": "852f7e078981d41712aa3e78242af59c7c11f81c",
+  "contracts_digest": "9e1a51f0ce5c718c5b05c1233999abd6f10e99e70f2dfdf62608387cda01622b",
+  "custom_sha": "94e10ca46ac8079133e988af697f8af10b0adaf0",
+  "input_digest": "8103a60cbc952f68d422989b2036b68d7aa768cf2626bf62fb55013ef5015d69",
+  "owner_install_id": "43c1808fdc86946b",
+  "previous_ready_sha": "94e10ca46ac8079133e988af697f8af10b0adaf0",
+  "schema_version": 1,
+  "upstream_sha": "c5fc0958b49f415041c7f356c8bdf9f914037e89",
+  "validated_at": "2026-10-14T19:32:23.655368+00:00",
+  "validation": {
+    "dependency_environment": "pass",
+    "desktop_tests": "pass",
+    "desktop_types": "pass",
+    "macos_build": "not_requested",
+    "python_contracts": "pass",
+    "repository_checks": "pass",
+    "required_capabilities": "pass"
+  },
+  "verification_policy_digest": "e92b40da4fb527e6d97eef5aeb842227a4ec2e81ba93cf4542ab1b2d0b70ffa5"
+}
