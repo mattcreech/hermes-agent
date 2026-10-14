@@ -169,9 +169,12 @@ def _tests(root: Path, *, interpreter: Path | None = None) -> None:
             if not (root / test).is_file():
                 raise ValueError(f"canonical behavior test missing: {test}")
         (scratch / "tmp").mkdir()
-        from pm import env_for
+        from pm import uv_launcher
 
-        tool_path = env_for("uv", base_env={"PATH": "/usr/local/bin:/usr/bin:/bin"})["PATH"]
+        uv = uv_launcher("uv")
+        if uv is None:
+            raise RuntimeError("PM-managed uv is required for dependency contract verification")
+        tool_path = str(uv.parent) + os.pathsep + "/usr/local/bin:/usr/bin:/bin"
         env = {"PATH": tool_path, "HOME": str(scratch),
                "HERMES_HOME": str(scratch / "hermes"), "TMPDIR": str(scratch / "tmp"),
                "HERMES_PYTHON": str(interpreter), "TZ": "UTC", "LANG": "C.UTF-8",
