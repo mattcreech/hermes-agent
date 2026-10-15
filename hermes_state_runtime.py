@@ -14,9 +14,25 @@ from hermes_state_keys import admission_fingerprint
 
 
 class RuntimeStoreError(ValueError):
-    def __init__(self, reason: str):
+    """A refusal by the state authority. ``reason`` is the bounded wire code (callers compare it as a
+    string); ``field`` and ``detail`` name the check that fired and why, so a client and the gateway
+    log can tell the reasons' many checks apart instead of reporting the bare code."""
+
+    def __init__(self, reason: str, *, field: str | None = None, detail: str | None = None):
         self.reason = reason
+        self.field = _one_line(field, 80)
+        self.detail = _one_line(detail, 160)
         super().__init__(reason)
+
+
+def _one_line(value, limit):
+    """A refusal's ``field``/``detail`` as the log line and the client frame carry it: either may hold
+    client text, so whitespace collapses to single spaces, other non-printables drop (no forged log
+    lines), and the length is bounded below the client's frame limit."""
+    if value is None:
+        return None
+    text = ''.join(ch for ch in ' '.join(str(value).split()) if ch.isprintable())
+    return text[:limit] or None
 
 
 def _text(value):
