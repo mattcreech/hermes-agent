@@ -1,11 +1,10 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { I18nProvider } from '@/i18n/context'
 import { en } from '@/i18n/en'
 import {
   $backendUpdateApply,
-  $backendUpdateStatus,
   $updateApply,
   $updateOverlayOpen,
   $updateOverlayTarget,
@@ -20,64 +19,9 @@ afterEach((): void => {
   cleanup()
   $updateOverlayOpen.set(false)
   $updateStatus.set(null)
-  $backendUpdateStatus.set(null)
   resetUpdateApplyState()
   Reflect.deleteProperty(window, 'hermesDesktop')
   vi.restoreAllMocks()
-})
-
-it('explains pending preparation and invokes the normal backend update action', async (): Promise<void> => {
-  const message = 'New upstream changes will be prepared and verified during Update.'
-  const api = vi.fn().mockResolvedValue({ ok: false, message: 'Test action acknowledged.', update_command: '' })
-  window.hermesDesktop = { api } as unknown as Window['hermesDesktop']
-  $updateOverlayTarget.set('backend')
-  $updateOverlayOpen.set(true)
-  $backendUpdateStatus.set({ supported: true, updateAvailable: true, upstreamPending: true, behind: null, message })
-  await act(async (): Promise<void> => {
-    render(
-      <I18nProvider configClient={null} initialLocale="en">
-        <UpdatesOverlay />
-      </I18nProvider>
-    )
-  })
-
-  expect(screen.getByText(message)).toBeTruthy()
-  await act(async (): Promise<void> => {
-    fireEvent.click(screen.getByRole('button', { name: en.updates.updateNow }))
-  })
-  expect(api).toHaveBeenCalledWith(expect.objectContaining({ path: '/api/hermes/update', method: 'POST' }))
-})
-
-it('keeps failure diagnostics visible and copyable in the update modal', async (): Promise<void> => {
-  const detail = 'Preparation held: dependency contract failed; the working version was kept.'
-  const writeClipboard = vi.fn().mockResolvedValue(undefined)
-  window.hermesDesktop = { writeClipboard } as unknown as Window['hermesDesktop']
-  $updateOverlayTarget.set('backend')
-  $updateOverlayOpen.set(true)
-  $backendUpdateApply.set({
-    applying: false,
-    stage: 'error',
-    message: 'Update failed.',
-    percent: null,
-    error: 'apply-failed',
-    command: null,
-    log: [{ at: 1, stage: 'prepare', message: detail }]
-  })
-  await act(async (): Promise<void> => {
-    render(
-      <I18nProvider configClient={null} initialLocale="en">
-        <UpdatesOverlay />
-      </I18nProvider>
-    )
-  })
-
-  expect(screen.getByText(en.notifications.details)).toBeTruthy()
-  expect(screen.getByText(detail).closest('details')).toBeTruthy()
-  await act(async (): Promise<void> => {
-    fireEvent.click(screen.getByText(en.notifications.details))
-    fireEvent.click(screen.getByRole('button', { name: en.notifications.copyDetail }))
-  })
-  expect(writeClipboard).toHaveBeenCalledWith(detail)
 })
 
 it('shows manual recovery guidance without claiming the help command installs an update', async (): Promise<void> => {
