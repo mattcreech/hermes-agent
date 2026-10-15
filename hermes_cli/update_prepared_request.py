@@ -69,7 +69,7 @@ def _command(settings: dict, requested: str) -> list[str]:
             or any(not isinstance(arg, str) or not arg or "\n" in arg or "\x00" in arg for arg in command)
             or not Path(command[0]).is_absolute()):
         raise PreparationRequired("This installation has no valid on-demand preparation command")
-    return [*command, "--on-demand", "--upstream-sha", requested, "--lock-timeout", "2400"]
+    return [*command, "--on-demand", "--upstream-sha", requested, "--lock-timeout", "0"]
 
 
 def _stop(process: subprocess.Popen) -> None:
@@ -88,8 +88,8 @@ def _stop(process: subprocess.Popen) -> None:
             process.wait(timeout=5)
 
 
-def _stream(command: list[str], root: Path, home: Path, log: Path, *, timeout: float = 2400) -> dict:
-    """One total wall budget includes joining an hourly run and fresh preparation."""
+def _stream(command: list[str], root: Path, home: Path, log: Path, *, timeout: float | None = None) -> dict:
+    """Observe preparation until completion or explicit caller cancellation/timeout."""
     from hermes_cli.source_check import source_git_env
     from hermes_platform.host.facts import os_family
 
@@ -98,17 +98,17 @@ def _stream(command: list[str], root: Path, home: Path, log: Path, *, timeout: f
     env = {**source_git_env(), "HERMES_HOME": str(home), "PYTHONUNBUFFERED": "1"}
     process = subprocess.Popen(command, cwd=root, env=env, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
-    deadline, buffer, result = time.monotonic() + timeout, b"", None
+    deadline, buffer, result = (time.monotonic() + timeout if timeout is not None else None), b"", None
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ)
     try:
         with log.open("xb") as output:
             log.chmod(0o600)
             while selector.get_map():
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise PreparationRequired("Preparation exceeded its 40-minute budget; the working version was kept")
-                if not selector.select(min(20, remaining)):
+                remaining = deadline - time.monotonic() if deadline is not None else None
+                if remaining is not None and remaining <= 0:
+                    raise PreparationRequired("Preparation exceeded the explicitly requested timeout; the working version was kept")
+                if not selector.select(min(20, remaining) if remaining is not None else 20):
                     continue
                 chunk = os.read(process.stdout.fileno(), 65536)
                 if not chunk:
@@ -128,7 +128,7 @@ def _stream(command: list[str], root: Path, home: Path, log: Path, *, timeout: f
                         print(line, flush=True)
             if buffer:
                 print(buffer.decode("utf-8", errors="replace"), flush=True)
-            code = process.wait(timeout=max(0.01, deadline - time.monotonic()))
+            code = process.wait(timeout=max(0.01, deadline - time.monotonic()) if deadline is not None else None)
         if not isinstance(result, dict) or result.get("schema_version") != 1:
             raise PreparationRequired(f"Preparation did not return a completion record (exit {code})")
         if code != 0 or result.get("status") != "ready":

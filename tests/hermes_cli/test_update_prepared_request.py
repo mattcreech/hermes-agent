@@ -37,7 +37,7 @@ def test_failure_or_nonzero_cannot_claim_success(tmp_path, terminal, exit_code):
 
 def test_hung_coordinator_is_bounded_without_a_completion_record(tmp_path):
     program = 'import threading; threading.Event().wait()'
-    with pytest.raises(PreparationRequired, match='40-minute budget'):
+    with pytest.raises(PreparationRequired, match='explicitly requested timeout'):
         request._stream([sys.executable, '-c', program], tmp_path, tmp_path,
                         tmp_path / 'bounded.log', timeout=0.1)
 
@@ -88,7 +88,7 @@ def test_owning_policy_scopes_the_direct_coordinator_and_records_result(feed, mo
     monkeypatch.setattr(update_receipt, 'record_fact', lambda *args: facts.append(args))
     monkeypatch.setattr(update_receipt, 'record_stage', lambda *args, **kwargs: stages.append(args))
     def coordinator(command, root, home, log):
-        assert command[-5:] == ['--on-demand', '--upstream-sha', feed.target, '--lock-timeout', '2400']
+        assert command[-5:] == ['--on-demand', '--upstream-sha', feed.target, '--lock-timeout', '0']
         assert root == feed.root and home == feed.home
         return {'schema_version': 1, 'status': 'ready', 'requested_upstream_sha': feed.target,
                 'ready_sha': feed.target}
@@ -199,3 +199,9 @@ def test_preparable_inputs_keep_update_available_without_admitting_source(feed, 
     if stale == 'runtime-changed':
         with pytest.raises(PreparationRequired, match='changed since preparation'):
             prepared.admit_target(feed.root, {}, prepared.policy(feed.root))
+
+
+def test_native_preparation_has_no_implicit_wall_clock_limit(tmp_path):
+    program = "import json;print('HERMES_PREPARED_RESULT='+json.dumps({'schema_version':1,'status':'ready'}))"
+    result = request._stream([sys.executable, '-c', program], tmp_path, tmp_path, tmp_path / 'unlimited.log')
+    assert result['status'] == 'ready'

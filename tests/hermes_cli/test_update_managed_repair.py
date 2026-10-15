@@ -218,3 +218,19 @@ def test_out_of_scope_merge_retains_diagnostics_without_inference(checkout, monk
     assert "client.ts" in log.read_text()
     assert git(root, "rev-parse", "HEAD") == original
     assert git(root, "status", "--porcelain") == ""
+
+
+@pytest.mark.parametrize('timeout', [None, 1])
+def test_native_proposal_cancellation_stays_with_owner_when_no_deadline(tmp_path, monkeypatch, timeout):
+    import os
+    import sys
+    from types import SimpleNamespace
+    from hermes_platform import resolver
+
+    candidate = tmp_path / 'candidate'
+    candidate.mkdir()
+    worker = tmp_path / 'fake_codex.py'
+    worker.write_text("import json,os,sys\nfrom pathlib import Path\nsys.stdin.read()\np=Path(sys.argv[sys.argv.index('--output-last-message')+1])\np.write_text(json.dumps({'patch':'','summary':str(os.getpgrp())}))\n")
+    monkeypatch.setattr(resolver, 'locate_command', lambda *args, **kwargs: SimpleNamespace(command=[sys.executable, str(worker)]))
+    proposal = repair._propose(candidate, tmp_path, 'fixture', tmp_path / 'inference.log', timeout=timeout)
+    assert (int(proposal['summary']) == os.getpgrp()) is (timeout is None)
