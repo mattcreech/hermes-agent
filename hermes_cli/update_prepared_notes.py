@@ -17,15 +17,15 @@ class PreparationRequired(ValueError):
 
 
 def required_gates(platform: str) -> tuple[str, ...]:
-    """Linux backend validation does not depend on a separate Darwin build host."""
-    return tuple(stage for stage in VALIDATION_STAGES if platform != "linux" or stage != "macos_build")
+    """Linux backend validation does not depend on Desktop code or a Darwin build host."""
+    return tuple(stage for stage in VALIDATION_STAGES if platform != "linux" or stage not in {"macos_build", "desktop_tests", "desktop_types"})
 
 
 def validate_gates(validation: object, platform: str) -> None:
     """Require host gates and preserve an explicitly unrequested Linux macOS build."""
     if (not isinstance(validation, dict)
             or any(validation.get(stage) != "pass" for stage in required_gates(platform))
-            or any(value != "pass" and not (platform == "linux" and stage == "macos_build"
+            or any(value != "pass" and not (platform == "linux" and stage in {"macos_build", "desktop_tests", "desktop_types"}
                                            and value == "not_requested")
                    for stage, value in validation.items())):
         raise PreparationRequired("Prepared candidate has not passed every required validation gate")

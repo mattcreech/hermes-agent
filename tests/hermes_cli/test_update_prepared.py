@@ -108,6 +108,14 @@ def test_linux_backend_note_admits_without_macos_build(feed):
     assert request["prepared_validation"]["validation"]["macos_build"] == "not_requested"
 
 
+@pytest.mark.platforms("linux")
+def test_backend_proof_does_not_require_desktop_tests_or_build(feed):
+    for stage in ("desktop_tests", "desktop_types", "macos_build"):
+        feed.note["validation"][stage] = "not_requested"
+    publish(feed)
+    assert prepared.admit_target(feed.root, {}, prepared.policy(feed.root)) == feed.target
+
+
 def test_gate_validation_requires_a_passed_macos_build_for_darwin():
     validation = dict.fromkeys(VALIDATION_STAGES, "pass")
     validate_gates(validation, "darwin")
