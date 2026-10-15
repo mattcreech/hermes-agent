@@ -1604,9 +1604,6 @@ export interface BackendUpdateCheckResponse {
   current_version: string
   behind: number | null
   update_available: boolean
-  /** New upstream code will be prepared and verified by the normal update action. */
-  upstream_pending?: boolean
-  branch?: string
   /** A stable release this build already contains: applying it moves back. */
   rollback_to?: null | string
   /** Update-available only; absent on older backends. */

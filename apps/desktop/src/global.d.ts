@@ -848,8 +848,6 @@ export type UpdaterMechanismClient =
 
 export interface DesktopUpdateStatus {
   supported: boolean
-  /** New upstream code needs preparation during the normal update action. */
-  upstreamPending?: boolean
   retirement?: {
     state: 'discontinued'
     destination: string

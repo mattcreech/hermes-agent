@@ -504,7 +504,6 @@ export function mapBackendCheck(res: BackendUpdateCheckResponse): DesktopUpdateS
   // "never render it as a literal number" — so pass that through instead of
   // clamping the sentinel to a byte-identical copy of "up to date".
   const behind = res.behind === undefined ? 0 : res.behind
-  const upstreamPending = res.upstream_pending === true
 
   // `behind: null` from a supported (git) backend is the endpoint's "the check
   // could not run" answer (GitHub unreachable, rate limited, offline) and
@@ -515,24 +514,21 @@ export function mapBackendCheck(res: BackendUpdateCheckResponse): DesktopUpdateS
   // that actually ran may claim there is nothing to update. Backends that
   // cannot self-update also answer `behind: null`, but `can_apply: false`
   // renders the unsupported copy first — those must not become failures.
-  // Confirmed upstream changes remain actionable while the verified feed is
-  // current: preparing them belongs to this update, with no ready commit count.
-  const checkFailed = res.can_apply && res.behind === null && !upstreamPending
+  const checkFailed = res.can_apply && res.behind === null
 
   return {
     supported: res.can_apply,
     error: checkFailed ? 'check-failed' : undefined,
     message: res.message ?? undefined,
-    updateAvailable: res.update_available || upstreamPending,
-    upstreamPending: upstreamPending || undefined,
-    branch: res.branch ?? undefined,
+    updateAvailable: res.update_available,
     rollback: Boolean(res.rollback_to),
     sourceVersion: res.rollback_to ?? undefined,
-    behind: behind === null || behind < 0 || (upstreamPending && behind === 0) ? null : behind,
+    behind: behind === null || behind < 0 ? null : behind,
     currentVersion: res.current_version,
     channel: res.channel,
+    branch: res.branch ?? undefined,
     latestTag: res.source_version && !res.rollback_to ? `v${res.source_version}` : undefined,
-    targetSha: res.update_available || upstreamPending ? `backend:${res.current_version}` : undefined,
+    targetSha: res.update_available ? `backend:${res.current_version}` : undefined,
     commits: res.commits,
     fetchedAt: Date.now()
   }
@@ -826,9 +822,6 @@ export async function applyUpdates(opts: DesktopUpdateApplyOptions = {}): Promis
 
 const BACKEND_ACTION_POLL_MS = 1500
 const BACKEND_ACTION_MAX_MS = 6 * 60 * 1000
-// On-demand preparation has a forty-minute total budget before native backups,
-// dependency installation and restarts. Observing it never starts another run.
-const BACKEND_ACTION_HARD_MAX_MS = 60 * 60 * 1000
 const BACKEND_RETURN_MAX_MS = 4 * 60 * 1000
 
 // C3: a committed update succeeds even when post-commit steps are still owed,
@@ -867,31 +860,6 @@ function failBackendApply(
   })
 
   return { ok: false, error: 'apply-failed', message: owed ? message : fallback.result }
-}
-
-function backendApplyAfterDeadline(
-  status: Awaited<ReturnType<typeof getActionStatus>> | null,
-  actionId: string | undefined
-): DesktopUpdateApplyResult {
-  if (status?.running || status?.exit_code == null) {
-    const message = translateNow('updates.applyStatus.completionUnknown')
-    $backendUpdateApply.set({
-      ...$backendUpdateApply.get(),
-      applying: false,
-      stage: 'manual',
-      error: null,
-      message,
-      command: null
-    })
-
-    return { ok: false, error: 'completion-unknown', manual: true, message }
-  }
-
-  return failBackendApply(
-    { shown: translateNow('updates.applyStatus.failed'), result: 'Backend update failed.' },
-    status,
-    actionId
-  )
 }
 
 function finishBackendApply(
@@ -1053,7 +1021,6 @@ async function runBackendUpdate(): Promise<DesktopUpdateApplyResult> {
     // Backups, dependency repair, and builds can legitimately take several
     // minutes. Keep the generous cap only as a guard against a stuck action.
     const actionDeadline = Date.now() + BACKEND_ACTION_MAX_MS
-    const hardDeadline = Date.now() + BACKEND_ACTION_HARD_MAX_MS
     let deadline = actionDeadline
     let reconnecting = false
 
@@ -1066,7 +1033,7 @@ async function runBackendUpdate(): Promise<DesktopUpdateApplyResult> {
       } catch {
         if (!reconnecting) {
           reconnecting = true
-          deadline = Math.min(hardDeadline, Date.now() + BACKEND_RETURN_MAX_MS)
+          deadline = Date.now() + BACKEND_RETURN_MAX_MS
           $backendUpdateApply.set({
             ...$backendUpdateApply.get(),
             applying: true,
@@ -1081,7 +1048,7 @@ async function runBackendUpdate(): Promise<DesktopUpdateApplyResult> {
       if (last.running) {
         if (reconnecting) {
           reconnecting = false
-          deadline = Math.min(hardDeadline, Date.now() + BACKEND_ACTION_MAX_MS)
+          deadline = actionDeadline
           $backendUpdateApply.set({
             ...$backendUpdateApply.get(),
             applying: true,
@@ -1089,10 +1056,6 @@ async function runBackendUpdate(): Promise<DesktopUpdateApplyResult> {
             message: translateNow('updates.applyStatus.pulling')
           })
         }
-
-        // A live backend owns the outcome. Long builds and draining active
-        // turns are progress, not evidence that the update failed.
-        deadline = Math.min(hardDeadline, Date.now() + BACKEND_ACTION_MAX_MS)
 
         continue
       }
@@ -1126,7 +1089,11 @@ async function runBackendUpdate(): Promise<DesktopUpdateApplyResult> {
       }
     }
 
-    return backendApplyAfterDeadline(last, started.action_id)
+    return failBackendApply(
+      { shown: translateNow('updates.applyStatus.failed'), result: 'Backend update failed.' },
+      last,
+      started.action_id
+    )
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     $backendUpdateApply.set({

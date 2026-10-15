@@ -250,12 +250,7 @@ export function UpdatesOverlay() {
         {phase === 'guiSkew' && <GuiSkewView message={apply.message} onDone={() => handleClose(false)} />}
 
         {phase === 'error' ? (
-          <ErrorView
-            log={apply.log}
-            message={apply.message}
-            onDismiss={() => handleClose(false)}
-            onRetry={handleInstall}
-          />
+          <ErrorView message={apply.message} onDismiss={() => handleClose(false)} onRetry={handleInstall} />
         ) : null}
 
         {phase === 'idle' && !isBackend && status?.retirement?.state === 'discontinued' && (
@@ -445,7 +440,6 @@ function IdleView({
 
         <DialogTitle className="text-center text-xl">{title}</DialogTitle>
         <DialogDescription className="text-center text-sm">{body}</DialogDescription>
-        {status.message && <p className="text-center text-sm text-muted-foreground">{status.message}</p>}
       </div>
 
       <UpdateChangeList
@@ -651,20 +645,9 @@ function ApplyingView({
   )
 }
 
-function ErrorView({
-  log,
-  message,
-  onDismiss,
-  onRetry
-}: {
-  log: UpdateApplyState['log']
-  message: string
-  onDismiss: () => void
-  onRetry: () => void
-}) {
+function ErrorView({ message, onDismiss, onRetry }: { message: string; onDismiss: () => void; onRetry: () => void }) {
   const { t } = useI18n()
   const u = t.updates
-  const detail = log.map(entry => entry.message).join('\n')
 
   return (
     <ErrorState
@@ -676,15 +659,6 @@ function ErrorView({
       }
       title={<DialogTitle className="text-center text-xl font-semibold tracking-tight">{u.errorTitle}</DialogTitle>}
     >
-      {detail && (
-        <details className="min-w-0 text-left">
-          <summary className="cursor-pointer text-sm text-muted-foreground">{t.notifications.details}</summary>
-          <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">
-            {detail}
-          </pre>
-          <CopyButton buttonSize="sm" label={t.notifications.copyDetail} text={detail} />
-        </details>
-      )}
       <Button className="font-semibold" onClick={onRetry} size="lg">
         {u.tryAgain}
       </Button>

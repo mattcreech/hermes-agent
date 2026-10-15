@@ -1412,7 +1412,7 @@ describe('applyBackendUpdate recovery', () => {
     expect(getActionStatusSpy).toHaveBeenCalledTimes(3)
   })
 
-  it('continues observing a live update after reconnecting beyond six minutes', async () => {
+  it('restores the fixed action deadline after reconnecting', async () => {
     updateHermesSpy.mockResolvedValue({ action_id: 'a'.repeat(32), ok: true, name: 'hermes-update', pid: 1 })
 
     const running = {
@@ -1432,10 +1432,8 @@ describe('applyBackendUpdate recovery', () => {
     const promise = applyBackendUpdate()
     await vi.advanceTimersByTimeAsync(6 * 60 * 1000 + 1500)
 
-    expect($backendUpdateApply.get().applying).toBe(true)
-    getActionStatusSpy.mockResolvedValue({ ...running, running: false, exit_code: 0 })
-    await vi.advanceTimersByTimeAsync(3000)
-    await expect(promise).resolves.toMatchObject({ ok: true })
+    await expect(promise).resolves.toMatchObject({ error: 'apply-failed', ok: false })
+    expect($backendUpdateApply.get().stage).toBe('error')
   })
 
   it('shares one in-flight update between concurrent apply requests', async () => {
@@ -1457,7 +1455,7 @@ describe('applyBackendUpdate recovery', () => {
     expect(updateHermesSpy).toHaveBeenCalledTimes(1)
   })
 
-  it('reports unknown completion rather than failure for a live update beyond the hard budget', async () => {
+  it('fails closed when the update action never reaches a terminal state', async () => {
     updateHermesSpy.mockResolvedValue({ ok: true, name: 'hermes-update', pid: 1 })
     getActionStatusSpy.mockResolvedValue({
       exit_code: null,
@@ -1468,33 +1466,9 @@ describe('applyBackendUpdate recovery', () => {
     })
 
     const promise = applyBackendUpdate()
-    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 1500)
-    await expect(promise).resolves.toMatchObject({ ok: false, error: 'completion-unknown' })
-    expect($backendUpdateApply.get().stage).toBe('manual')
-    expect($backendUpdateApply.get().error).toBeNull()
-  })
-
-  it('observes preparation and the native install tail beyond forty-five minutes without posting again', async () => {
-    const actionId = 'f'.repeat(32)
-    const startedAt = Date.now()
-    updateHermesSpy.mockResolvedValue({ action_id: actionId, ok: true, name: 'hermes-update', pid: 1 })
-    getActionStatusSpy.mockImplementation(async () => {
-      const running = Date.now() - startedAt < 55 * 60 * 1000
-
-      return {
-        exit_code: running ? null : 0,
-        lines: [running ? 'Preparing and verifying updates…' : 'Update complete!'],
-        name: 'hermes-update',
-        pid: running ? 1 : null,
-        running
-      }
-    })
-
-    const promise = applyBackendUpdate()
-    await vi.advanceTimersByTimeAsync(55 * 60 * 1000 + 1500)
-
-    await expect(promise).resolves.toMatchObject({ ok: true })
-    expect(updateHermesSpy).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(6 * 60 * 1000 + 1500)
+    await expect(promise).resolves.toMatchObject({ ok: false, error: 'apply-failed' })
+    expect($backendUpdateApply.get().stage).toBe('error')
   })
 
   it('fails immediately when the update action exits nonzero', async () => {
@@ -1514,7 +1488,7 @@ describe('applyBackendUpdate recovery', () => {
     expect($backendUpdateApply.get().stage).toBe('error')
   })
 
-  it('reports unknown completion when the backend cannot be reached after restart', async () => {
+  it('surfaces an error when the backend never comes back after the restart', async () => {
     updateHermesSpy.mockResolvedValue({ ok: true, name: 'update', pid: 1 })
     getActionStatusSpy.mockRejectedValue(new Error('ECONNREFUSED'))
     checkHermesUpdateSpy.mockRejectedValue(new Error('ECONNREFUSED'))
@@ -1524,8 +1498,7 @@ describe('applyBackendUpdate recovery', () => {
     const result = await promise
 
     expect(result.ok).toBe(false)
-    expect(result.error).toBe('completion-unknown')
-    expect($backendUpdateApply.get().stage).toBe('manual')
+    expect($backendUpdateApply.get().stage).toBe('error')
   }, 10000)
 
   it('reports a committed update with owed follow-ups as success plus an owed-step warning', async () => {
