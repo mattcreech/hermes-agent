@@ -100,7 +100,7 @@ def test_current_home_bundled_sync_remains_native(profile_scope):
     assert not (profile_scope.sibling / 'skills').exists()
 
 
-def test_database_restore_keeps_current_home_and_scopes_siblings(profile_scope, monkeypatch):
+def test_database_restore_refusal_preserves_current_home_and_scopes_siblings(profile_scope, monkeypatch):
     state = profile_scope
     for home in (state.home, state.sibling):
         snapshot = backup._quick_snapshot_root(home) / '20261009-pre-update' / 'state.db'
@@ -109,19 +109,25 @@ def test_database_restore_keeps_current_home_and_scopes_siblings(profile_scope, 
             db.execute('CREATE TABLE witness (value TEXT)')
             db.execute("INSERT INTO witness VALUES ('preserved')")
         (home / 'state.db').write_bytes(b'corrupt database')
-    before = (state.sibling / 'state.db').read_bytes()
+    # Upstream now refuses in-place restore when the canonical epoch is unreadable.
+    # Preserve that safety behavior while proving which profile homes are checked.
+    verify = Mock(wraps=update_cmd_maint._verify_and_restore_one_state_db)
+    monkeypatch.setattr(update_cmd_maint, '_verify_and_restore_one_state_db', verify)
     enumerate_homes = Mock(wraps=backup._sibling_profile_homes)
     monkeypatch.setattr(backup, '_sibling_profile_homes', enumerate_homes)
     update_cmd_maint._verify_and_restore_state_dbs_post_update()
-    with sqlite3.connect(state.home / 'state.db') as db:
-        assert db.execute('SELECT value FROM witness').fetchall() == [('preserved',)]
+    assert (state.home / 'state.db').read_bytes() == b'corrupt database'
+    assert (state.sibling / 'state.db').read_bytes() == b'corrupt database'
+    expected = [state.home] if state.enabled else [state.home, state.sibling]
+    assert [call.args[0] for call in verify.call_args_list] == expected
+    for home in expected:
+        snapshot = backup._quick_snapshot_root(home) / '20261009-pre-update' / 'state.db'
+        with sqlite3.connect(snapshot) as db:
+            assert db.execute('SELECT value FROM witness').fetchall() == [('preserved',)]
     if state.enabled:
         enumerate_homes.assert_not_called()
-        assert (state.sibling / 'state.db').read_bytes() == before
     else:
         enumerate_homes.assert_called_once()
-        with sqlite3.connect(state.sibling / 'state.db') as db:
-            assert db.execute('SELECT value FROM witness').fetchall() == [('preserved',)]
 
 
 def test_catalog_invalidation_keeps_current_home_and_scopes_siblings(profile_scope, monkeypatch):
