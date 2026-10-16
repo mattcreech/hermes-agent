@@ -18,9 +18,9 @@ TRACKING_NOTES_REF = "refs/notes/hermes-prepared-consumed"
 def _git(root: Path, *args: str, timeout: int = 60, check: bool = True) -> str:
     from hermes_cli.source_check import source_git_env
     from hermes_cli.update_custody import run_git
-    from hermes_platform.resolver import locate_command
+    from hermes_cli.update_pause_record import _git_executable
 
-    command = locate_command("git").command
+    command = [_git_executable()]
     if not command:
         raise PreparationRequired("Git is unavailable for prepared-source verification")
     result = run_git(command, list(args), cwd=root, capture_output=True, text=True,
