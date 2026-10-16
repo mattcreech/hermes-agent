@@ -94,7 +94,7 @@ def _source_context(candidate: Path, permitted: set[str], detail: str, conflicts
         budget -= len(text)
     return "\n\n".join(pieces)
 
-def _propose(candidate: Path, directory: Path, prompt: str, log: Path) -> dict:
+def _propose(candidate: Path, directory: Path, prompt: str, log: Path, *, timeout: float | None = 300) -> dict:
     from hermes_platform.resolver import locate_command
 
     executable = locate_command("codex", known_dirs=(str(Path.home() / ".local/bin"),)).command
@@ -116,9 +116,9 @@ def _propose(candidate: Path, directory: Path, prompt: str, log: Path) -> dict:
     with log.open("wb") as output:
         log.chmod(0o600)
         proc = subprocess.Popen(command, cwd=candidate, env=env, stdin=subprocess.PIPE,
-                                stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+                                stdout=output, stderr=subprocess.STDOUT, start_new_session=timeout is not None)
         try:
-            proc.communicate(prompt.encode(), timeout=300)
+            proc.communicate(prompt.encode(), timeout=timeout)
         except subprocess.TimeoutExpired:
             import signal
             with contextlib.suppress(ProcessLookupError):

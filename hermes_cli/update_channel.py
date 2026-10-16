@@ -230,6 +230,8 @@ def set_install_channel(
     if is_commit_build(root):
         raise ValueError(COMMIT_BUILD_UPDATE_MESSAGE)
     channel = validate_name(channel)
+    from hermes_cli.update_prepared import guard_channel
+    guard_channel(root, channel)
 
     stamp = _read_stamp(root)
     if _package_channel(stamp) or stamp.get("updateMechanism") == "external":

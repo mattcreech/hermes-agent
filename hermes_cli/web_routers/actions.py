@@ -334,6 +334,10 @@ async def check_hermes_update(force: bool = False, profile: Optional[str] = None
         behind = None
 
     payload["behind"] = behind
+    if behind is not None and status.get("upstreamPending"):
+        payload.update(upstream_pending=True, update_available=True, branch=status.get("branch"),
+                       message=status.get("message"))
+        return payload
     if behind is None:
         payload["message"] = "Couldn't reach the update source — try again later."
     elif behind == 0:
@@ -346,7 +350,9 @@ async def check_hermes_update(force: bool = False, profile: Optional[str] = None
                            message=f"This build is newer than stable release v{status.get('sourceVersion')}. "
                                    "Updating moves it back to that release.")
         # "What's changed" for the desktop's remote update overlay; best-effort
-        # (empty list on any failure).
+        # (empty list on any failure). Channel + release name pick its notes source.
+        payload.update(channel=status.get("channel"), branch=status.get("branch"),
+                       source_version=status.get("sourceVersion"))
         payload["commits"] = [{**row, "sha": row["sha"][:7], "at": row["at"] // 1000}
                               for row in status.get("commits", [])[:20]]
     return payload

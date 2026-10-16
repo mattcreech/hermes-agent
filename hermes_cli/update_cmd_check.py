@@ -216,6 +216,13 @@ def select_apply_target(args, branch: str, request: dict, *, git_cmd, stop) -> t
     from hermes_cli.update_channel import channel_record, rides_default_channel
     from hermes_cli.update_cmd_common import _record_stop
 
+    from hermes_cli.update_prepared import policy
+    prepared = policy(_uc()._m().PROJECT_ROOT)
+    if prepared is not None:
+        request["branch"] = prepared["branch"]
+        request["prepared_policy"] = prepared
+        print(f"→ Prepared update feed: origin/{prepared['branch']}")
+        return f"origin/{prepared['branch']}", None, False, None
     if getattr(args, "branch", None):
         return f"origin/{branch}", None, False, None
     root = _uc()._m().PROJECT_ROOT

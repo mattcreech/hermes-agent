@@ -31,22 +31,18 @@ def _flatten(d, prefix="") -> dict:
 
 # ---------------------------------------------------------------------------
 # Catalog completeness -- this is the key invariant test.  If someone adds a
-# new key to en.yaml it must appear in every other locale unless explicitly
-# allowed to use the English fallback.
+# new key to en.yaml they MUST add it to every other locale, else runtime
+# falls back to English for those users and defeats the feature.
 # ---------------------------------------------------------------------------
 
 
 
 @pytest.mark.parametrize("lang", [l for l in i18n.SUPPORTED_LANGUAGES if l != "en"])
 def test_catalog_keys_match_english(lang: str):
-    """Non-English catalogs match English apart from explicitly allowed fallback keys."""
+    """Every non-English catalog must have exactly the same key set as English."""
     en_keys = set(_flatten(_load_raw("en")).keys())
     lang_keys = set(_flatten(_load_raw(lang)).keys())
-    # These Telegram opt-in strings intentionally use the English fallback until translated.
-    english_fallback_keys = {
-        "platform.telegram.picker.make_global", "platform.telegram.picker.saved_global",
-    }
-    missing = en_keys - lang_keys - english_fallback_keys
+    missing = en_keys - lang_keys
     extra = lang_keys - en_keys
     assert not missing, f"{lang}.yaml missing keys: {sorted(missing)}"
     assert not extra, f"{lang}.yaml has keys not in en.yaml: {sorted(extra)}"
