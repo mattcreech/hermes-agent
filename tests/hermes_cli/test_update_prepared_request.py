@@ -205,3 +205,39 @@ def test_native_preparation_has_no_implicit_wall_clock_limit(tmp_path):
     program = "import json;print('HERMES_PREPARED_RESULT='+json.dumps({'schema_version':1,'status':'ready'}))"
     result = request._stream([sys.executable, '-c', program], tmp_path, tmp_path, tmp_path / 'unlimited.log')
     assert result['status'] == 'ready'
+
+
+@pytest.mark.parametrize("available", [True, False])
+def test_stable_discovery_uses_official_published_release(feed, monkeypatch, available):
+    from hermes_cli import source_releases
+
+    config_path = feed.home / "config.yaml"
+    config = json.loads(config_path.read_text())
+    from hermes_cli.update_channel import install_id
+    config["updates"]["prepared_channels"][install_id(feed.root)]["upstream_channel"] = "stable"
+    config_path.write_text(json.dumps(config))
+    calls = []
+    def published(channel, **kwargs):
+        calls.append((channel, kwargs))
+        return ("v1.0.0", feed.base) if available else (None, None)
+    monkeypatch.setattr(source_releases, "resolve_source_release", published)
+    if available:
+        assert request.upstream_tip(feed.root) == feed.base
+    else:
+        with pytest.raises(PreparationRequired, match="stable release is unavailable"):
+            request.upstream_tip(feed.root)
+    assert calls == [("stable", {"repository": "NousResearch/hermes-agent", "pointer": False})]
+
+
+@pytest.mark.parametrize("status", ["ahead", "identical", "behind", "diverged", None])
+def test_stable_channel_keeps_installed_baseline_until_release_catches_up(feed, monkeypatch, status):
+    from hermes_cli import source_check, source_releases
+
+    monkeypatch.setattr(prepared, "policy", lambda root: {"upstream_channel": "stable", "stable_floor_sha": feed.base})
+    monkeypatch.setattr(source_releases, "resolve_source_release", lambda *a, **k: ("v1.0.0", feed.target))
+    monkeypatch.setattr(source_check, "_github_compare", lambda *a: {"status": status} if status else None)
+    if status is None:
+        with pytest.raises(PreparationRequired, match="installed baseline"):
+            request.upstream_tip(feed.root)
+    else:
+        assert request.upstream_tip(feed.root) == (feed.target if status in {"ahead", "identical"} else feed.base)

@@ -30,7 +30,28 @@ class PreparationHeld(PreparationRequired):
 def upstream_tip(root: Path, git: str = "git") -> str:
     from hermes_cli.source_check import _branch_tip, OFFICIAL_REPOSITORY
 
-    tip, _missing, failure = _branch_tip(OFFICIAL_REPOSITORY, "main", root, git, "upstream")
+    from hermes_cli.update_prepared import policy
+
+    channel = (policy(root) or {}).get("upstream_channel", "main")
+    if channel == "stable":
+        from hermes_cli.source_releases import resolve_source_release
+
+        _tag, tip = resolve_source_release("stable", repository=OFFICIAL_REPOSITORY, pointer=False)
+        failure = "published stable release is unavailable"
+        floor = (policy(root) or {}).get("stable_floor_sha")
+        if floor and isinstance(tip, str):
+            from hermes_cli.source_check import _github_compare
+
+            comparison = _github_compare(floor, tip, OFFICIAL_REPOSITORY)
+            status = (comparison or {}).get("status")
+            if status in {"behind", "diverged"}:
+                tip = floor  # Keep installed main code until a stable release contains it.
+            elif status not in {"ahead", "identical"}:
+                raise PreparationRequired("Could not verify stable release against the installed baseline")
+    elif channel == "main":
+        tip, _missing, failure = _branch_tip(OFFICIAL_REPOSITORY, "main", root, git, "upstream")
+    else:
+        raise PreparationRequired("Prepared upstream channel must be main or stable")
     if not isinstance(tip, str) or not re.fullmatch(r"[0-9a-f]{40}", tip):
         raise PreparationRequired(f"Could not check official upstream: {failure or 'main is unavailable'}")
     return tip
